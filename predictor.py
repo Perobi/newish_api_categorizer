@@ -176,6 +176,4 @@ def predict_hierarchy(title):
     category, sub_category, type_ = adjust_predictions_based_on_schema(category[0], sub_category[0], type_[0])
     
     return category, sub_category, type_
-
-# train_models(DATA_PATH)
         
