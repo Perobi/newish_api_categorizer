@@ -72,4 +72,5 @@ def predict_from_csv():
         return jsonify({'error': 'Invalid file format. Please upload a CSV file.'}), 400
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8080)
+    port = int(os.environ.get('PORT', 8080))
+    app.run(debug=True, port=port)
