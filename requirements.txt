@@ -1,5 +1,4 @@
 absl-py==2.1.0
-appnope @ file:///home/conda/feedstock_root/build_artifacts/appnope_1707233003401/work
 asttokens @ file:///home/conda/feedstock_root/build_artifacts/asttokens_1698341106958/work
 astunparse==1.6.3
 blinker==1.7.0
