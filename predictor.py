@@ -10,7 +10,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Embedding, LSTM, Dense, SpatialDropout1D
 from tensorflow.keras.callbacks import EarlyStopping
-from clean_data import clean_title, clean_description  
+from clean_data import clean_title
 
 # Global constants
 DATA_PATH = './data/raw_data/kashew_ml_products.csv'
