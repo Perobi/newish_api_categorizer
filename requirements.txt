@@ -1,9 +1,7 @@
-Flask
-pandas
-tensorflow-cpu
-scikit-learn
-nltk
-numpy
-Werkzeug
-
-
+Flask==2.0.2
+pandas==1.3.3
+tensorflow==2.7.0
+scikit-learn==0.24.2
+nltk==3.6.3
+numpy==1.21.5
+Werkzeug==2.0.2
