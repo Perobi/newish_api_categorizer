@@ -1,7 +1,6 @@
 Flask
 pandas
 scikit-learn
-nltk
 numpy==1.21.5
 Werkzeug
 tensorflow
