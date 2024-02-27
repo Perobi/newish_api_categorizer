@@ -3,6 +3,7 @@ import numpy as np
 import os
 import pickle
 from sklearn.preprocessing import LabelEncoder
+from sklearn.utils.class_weight import compute_class_weight
 import tensorflow as tf
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.preprocessing.text import Tokenizer
@@ -10,11 +11,11 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Embedding, LSTM, Dense, SpatialDropout1D
 from tensorflow.keras.callbacks import EarlyStopping
-from clean_data import clean_title
+from clean_data import clean_title  # Ensure this function is correctly defined in your module
 
 # Global constants
 DATA_PATH = './data/raw_data/kashew_ml_products.csv'
-MODEL_DIR = './models'
+MODEL_DIR = './model'
 MAX_WORDS = 5000
 MAX_LEN = 50
 
@@ -60,53 +61,6 @@ schema = [
         {"name": "Ceiling & Wall Lamps"}, {"name": "Floor Lamps"}]},
 ]
 
-
-
-def train_models(data_path):
-    # # Reset TensorFlow session
-    tf.keras.backend.clear_session()
-
-    df = pd.read_csv(data_path)
-    df['clean_title'] = df['title'].apply(clean_title)
- 
-    # Tokenize combined text
-    tokenizer = Tokenizer(num_words=MAX_WORDS, lower=True)
-    tokenizer.fit_on_texts(df['clean_title'])
-    sequences = tokenizer.texts_to_sequences(df['clean_title'])
-    padded_sequences = pad_sequences(sequences, maxlen=MAX_LEN)
-
-    # Encode labels
-    label_encoder_category = LabelEncoder()
-    label_encoder_sub_category = LabelEncoder()
-    label_encoder_type = LabelEncoder()
-
-    category_encoded = label_encoder_category.fit_transform(df['category'])
-    sub_category_encoded = label_encoder_sub_category.fit_transform(df['sub_category'])
-    type_encoded = label_encoder_type.fit_transform(df['type'])
-
-    # Convert to one-hot
-    category_labels = to_categorical(category_encoded)
-    sub_category_labels = to_categorical(sub_category_encoded)
-    type_labels = to_categorical(type_encoded)
-
-    # Train models if the model files do not exist
-    train_and_save_model(padded_sequences, category_labels, 'category')
-
-    train_and_save_model(padded_sequences, sub_category_labels, 'sub_category')
-
-    train_and_save_model(padded_sequences, type_labels, 'type')
-
-    # Save tokenizer and label encoders
-    save_object(tokenizer, 'tokenizer.pickle')
-    save_object(label_encoder_category, 'label_encoder_category.pickle')
-    save_object(label_encoder_sub_category, 'label_encoder_sub_category.pickle')
-    save_object(label_encoder_type, 'label_encoder_type.pickle')
-
-def train_and_save_model(padded_sequences, labels, model_name):
-    model = create_model(labels.shape[1])
-    model.fit(padded_sequences, labels, batch_size=4, epochs=10, validation_split=0.2, callbacks=[EarlyStopping(monitor='val_loss', patience=3, min_delta=0.0001)])
-    model.save(f'{MODEL_DIR}/{model_name}.keras')
-
 def create_model(output_dim):
     model = Sequential([
         Embedding(MAX_WORDS, 40, input_length=MAX_LEN),
@@ -123,30 +77,66 @@ def save_object(obj, filename):
     with open(f'{MODEL_DIR}/{filename}', 'wb') as handle:
         pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
+def train_and_save_model(padded_sequences, labels, model_name, y_integers):
+    class_weights = compute_class_weight('balanced', classes=np.unique(y_integers), y=y_integers)
+    class_weight_dict = dict(enumerate(class_weights))
+    
+    model = create_model(labels.shape[1])
+    model.fit(padded_sequences, labels, batch_size=4, epochs=10, validation_split=0.2, callbacks=[EarlyStopping(monitor='val_loss', patience=3, min_delta=0.0001)], class_weight=class_weight_dict)
+    model.save(f'{MODEL_DIR}/{model_name}.keras')
+
 def adjust_predictions_based_on_schema(category, sub_category, type_):
     for cat in schema:
         if cat['category'] == category:
-            valid_sub_categories = [sub['name'] for sub in cat['subCategories']]
+            valid_sub_categories = [sub['name'] for sub in cat.get('subCategories', [])]
             if sub_category not in valid_sub_categories:
-                sub_category = valid_sub_categories[0]  # Default to the first valid subcategory
+                sub_category = valid_sub_categories[0] if valid_sub_categories else 'None'
                 
-            for sub in cat['subCategories']:
-                if sub['name'] == sub_category:
-                    if 'types' in sub:  # If there are types for this subcategory
-                        valid_types = [t['name'] for t in sub['types']]
-                        if type_ not in valid_types:
-                            if valid_types:  # If there are valid types, adjust the type prediction
-                                type_ = valid_types[0]
-                    else:
-                        type_ = 'None'  # If no types are defined for the subcategory, set type to None
+            valid_types = []
+            for sub in cat.get('subCategories', []):
+                if sub['name'] == sub_category and 'types' in sub:
+                    valid_types = [t['name'] for t in sub['types']]
+                    break
+                    
+            if type_ not in valid_types:
+                type_ = valid_types[0] if valid_types else 'None'
             break
     return category, sub_category, type_
 
+def train_models(data_path):
+    tf.keras.backend.clear_session()
+    df = pd.read_csv(data_path)
+    df['clean_title'] = df['title'].apply(clean_title)
+
+    tokenizer = Tokenizer(num_words=MAX_WORDS, lower=True)
+    tokenizer.fit_on_texts(df['clean_title'])
+    sequences = tokenizer.texts_to_sequences(df['clean_title'])
+    padded_sequences = pad_sequences(sequences, maxlen=MAX_LEN)
+
+    label_encoder_category = LabelEncoder()
+    label_encoder_sub_category = LabelEncoder()
+    label_encoder_type = LabelEncoder()
+
+    df['category_encoded'] = label_encoder_category.fit_transform(df['category'])
+    df['sub_category_encoded'] = label_encoder_sub_category.fit_transform(df['sub_category'])
+    df['type_encoded'] = label_encoder_type.fit_transform(df['type'].fillna('None'))  # Handle NaN types
+
+    category_labels = to_categorical(df['category_encoded'])
+    sub_category_labels = to_categorical(df['sub_category_encoded'])
+    type_labels = to_categorical(df['type_encoded'])
+
+    # Pass integer-encoded labels for class weight computation
+    train_and_save_model(padded_sequences, category_labels, 'category', df['category_encoded'])
+    train_and_save_model(padded_sequences, sub_category_labels, 'sub_category', df['sub_category_encoded'])
+    train_and_save_model(padded_sequences, type_labels, 'type', df['type_encoded'])
+
+    save_object(tokenizer, 'tokenizer.pickle')
+    save_object(label_encoder_category, 'label_encoder_category.pickle')
+    save_object(label_encoder_sub_category, 'label_encoder_sub_category.pickle')
+    save_object(label_encoder_type, 'label_encoder_type.pickle')
+
 def predict_hierarchy(title):
-    # Load necessary objects
-    model_category = tf.keras.models.load_model(f'{MODEL_DIR}/category.keras')
-    model_sub_category = tf.keras.models.load_model(f'{MODEL_DIR}/sub_category.keras')
-    model_type = tf.keras.models.load_model(f'{MODEL_DIR}/type.keras')
+    # Load the tokenizer and label encoders
     with open(f'{MODEL_DIR}/tokenizer.pickle', 'rb') as handle:
         tokenizer = pickle.load(handle)
     with open(f'{MODEL_DIR}/label_encoder_category.pickle', 'rb') as handle:
@@ -155,25 +145,28 @@ def predict_hierarchy(title):
         label_encoder_sub_category = pickle.load(handle)
     with open(f'{MODEL_DIR}/label_encoder_type.pickle', 'rb') as handle:
         label_encoder_type = pickle.load(handle)
+    
+    # Preprocess the title
+    clean_title_text = clean_title(title)
+    sequence = tokenizer.texts_to_sequences([clean_title_text])
+    padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN)
+    
+    # Load models and make predictions
+    category_model = tf.keras.models.load_model(f'{MODEL_DIR}/category.keras')
+    sub_category_model = tf.keras.models.load_model(f'{MODEL_DIR}/sub_category.keras')
+    type_model = tf.keras.models.load_model(f'{MODEL_DIR}/type.keras')
+    
+    category_pred = category_model.predict(padded_sequence)
+    sub_category_pred = sub_category_model.predict(padded_sequence)
+    type_pred = type_model.predict(padded_sequence)
+    
+    # Convert predictions to labels
+    category = label_encoder_category.inverse_transform([np.argmax(category_pred)])[0]
+    sub_category = label_encoder_sub_category.inverse_transform([np.argmax(sub_category_pred)])[0]
+    type_ = label_encoder_type.inverse_transform([np.argmax(type_pred)])[0]
+    
+    # Adjust predictions based on schema
+    adjusted_category, adjusted_sub_category, adjusted_type = adjust_predictions_based_on_schema(category, sub_category, type_)
+    
+    return adjusted_category, adjusted_sub_category, adjusted_type
 
-    # Clean title and description
-    title_cleaned = clean_title(title) 
-
-    # Tokenize combined text
-    seq = tokenizer.texts_to_sequences([title_cleaned])
-    padded = pad_sequences(seq, maxlen=MAX_LEN)
-    
-    # Predict
-    category_pred = model_category.predict(padded)
-    sub_category_pred = model_sub_category.predict(padded)
-    type_pred = model_type.predict(padded)
-    
-    category = label_encoder_category.inverse_transform([np.argmax(category_pred)])
-    sub_category = label_encoder_sub_category.inverse_transform([np.argmax(sub_category_pred)])
-    type_ = label_encoder_type.inverse_transform([np.argmax(type_pred)])
-    
-   # Adjust predictions based on schema
-    category, sub_category, type_ = adjust_predictions_based_on_schema(category[0], sub_category[0], type_[0])
-    
-    return category, sub_category, type_
-        
