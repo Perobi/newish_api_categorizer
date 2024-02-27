@@ -71,6 +71,7 @@ def predict_from_csv():
     else:
         return jsonify({'error': 'Invalid file format. Please upload a CSV file.'}), 400
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
-    app.run(debug=True, port=port)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))  # default port is 5000 for local development
+    app.run(host='0.0.0.0', port=port)  # binds the server to the '0.0.0.0' host and to the port specified by the PORT environment variable
+
