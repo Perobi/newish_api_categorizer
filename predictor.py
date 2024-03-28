@@ -14,7 +14,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 from clean_data import clean_title  # Ensure this function is correctly defined in your module
 
 # Global constants
-DATA_PATH = './data/raw_data/kashew_ml_products.csv'
+DATA_PATH = './data/raw_data/kashew_ml_products_mar_2024.csv'
 MODEL_DIR = './model'
 MAX_WORDS = 5000
 MAX_LEN = 50
@@ -63,7 +63,7 @@ schema = [
 
 def create_model(output_dim):
     model = Sequential([
-        Embedding(MAX_WORDS, 40, input_length=MAX_LEN),
+        Embedding(MAX_WORDS, 40),
         SpatialDropout1D(0.2),
         LSTM(100, dropout=0.2, recurrent_dropout=0.2),
         Dense(output_dim, activation='softmax')
@@ -169,4 +169,9 @@ def predict_hierarchy(title):
     adjusted_category, adjusted_sub_category, adjusted_type = adjust_predictions_based_on_schema(category, sub_category, type_)
     
     return adjusted_category, adjusted_sub_category, adjusted_type
+
+# make a prediction using the trained model and print the result
+predicted_category, predicted_sub_category, predicted_type = predict_hierarchy('La-Z-Boy Burgundy Recliner')
+print(f'CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}' )
+
 
