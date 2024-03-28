@@ -170,8 +170,7 @@ def predict_hierarchy(title):
     
     return adjusted_category, adjusted_sub_category, adjusted_type
 
-# make a prediction using the trained model and print the result
-predicted_category, predicted_sub_category, predicted_type = predict_hierarchy('La-Z-Boy Burgundy Recliner')
-print(f'CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}' )
+# predicted_category, predicted_sub_category, predicted_type = predict_hierarchy('La-Z-Boy Burgundy Recliner')
+# print(f'CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}' )
 
 
