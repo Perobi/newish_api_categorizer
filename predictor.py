@@ -151,16 +151,15 @@ def predict_hierarchy(title):
     sequence = tokenizer.texts_to_sequences([clean_title_text])
     padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN)
     
-    # Load models and recompile
+    # Pre-compile prediction functions
     category_model = tf.keras.models.load_model(f'{MODEL_DIR}/category.keras', compile=False)
-    category_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-
     sub_category_model = tf.keras.models.load_model(f'{MODEL_DIR}/sub_category.keras', compile=False)
-    sub_category_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-
     type_model = tf.keras.models.load_model(f'{MODEL_DIR}/type.keras', compile=False)
-    type_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-    
+
+    category_model.predict(np.zeros((1, MAX_LEN)))  # Pre-warm model
+    sub_category_model.predict(np.zeros((1, MAX_LEN)))
+    type_model.predict(np.zeros((1, MAX_LEN)))
+
     # Make predictions
     category_pred = category_model.predict(padded_sequence)
     sub_category_pred = sub_category_model.predict(padded_sequence)
@@ -175,6 +174,7 @@ def predict_hierarchy(title):
     adjusted_category, adjusted_sub_category, adjusted_type = adjust_predictions_based_on_schema(category, sub_category, type_)
     
     return adjusted_category, adjusted_sub_category, adjusted_type
+
 
 # Uncomment the following line to train the models
 # train_models(DATA_PATH)
