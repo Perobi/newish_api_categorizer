@@ -151,17 +151,11 @@ def predict_hierarchy(title):
     sequence = tokenizer.texts_to_sequences([clean_title_text])
     padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN)
     
-    # Load models and recompile
-    category_model = tf.keras.models.load_model(f'{MODEL_DIR}/category.keras', compile=False)
-    category_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-
-    sub_category_model = tf.keras.models.load_model(f'{MODEL_DIR}/sub_category.keras', compile=False)
-    sub_category_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-
-    type_model = tf.keras.models.load_model(f'{MODEL_DIR}/type.keras', compile=False)
-    type_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    # Load models and make predictions
+    category_model = tf.keras.models.load_model(f'{MODEL_DIR}/category.keras')
+    sub_category_model = tf.keras.models.load_model(f'{MODEL_DIR}/sub_category.keras')
+    type_model = tf.keras.models.load_model(f'{MODEL_DIR}/type.keras')
     
-    # Make predictions
     category_pred = category_model.predict(padded_sequence)
     sub_category_pred = sub_category_model.predict(padded_sequence)
     type_pred = type_model.predict(padded_sequence)
@@ -178,7 +172,7 @@ def predict_hierarchy(title):
 
 # Uncomment the following line to train the models
 # train_models(DATA_PATH)
-predicted_category, predicted_sub_category, predicted_type = predict_hierarchy('West Elm modern Loveseat')
+predicted_category, predicted_sub_category, predicted_type = predict_hierarchy('La-Z-Boy Burgundy Recliner')
 print(f'CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}' )
 
 
