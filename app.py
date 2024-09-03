@@ -1,13 +1,11 @@
-from flask import Flask, request, jsonify, send_file
-from predictor import predict_hierarchy
+from flask import Flask, request, jsonify
+from predictor import predict_hierarchy, load_models_and_encoders  # Ensure you have this function in `predictor.py`
 import os
 
 app = Flask(__name__)
 
-# Assuming you're uploading the CSV to a specific path
-# UPLOAD_FOLDER = './data/uploads'
-# if not os.path.exists(UPLOAD_FOLDER):
-#     os.makedirs(UPLOAD_FOLDER)
+# Load the models and encoders when the application starts
+load_models_and_encoders()
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -22,4 +20,3 @@ def predict():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))  # default port is 5000 for local development
     app.run(host='0.0.0.0', port=port)  # binds the server to the '0.0.0.0' host and to the port specified by the PORT environment variable
-

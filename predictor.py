@@ -61,6 +61,15 @@ schema = [
         {"name": "Ceiling & Wall Lamps"}, {"name": "Floor Lamps"}]},
 ]
 
+# Global variables for models and encoders
+category_model = None
+sub_category_model = None
+type_model = None
+tokenizer = None
+label_encoder_category = None
+label_encoder_sub_category = None
+label_encoder_type = None
+
 def create_model(output_dim):
     model = Sequential([
         Embedding(MAX_WORDS, 40),
@@ -83,7 +92,28 @@ def train_and_save_model(padded_sequences, labels, model_name, y_integers):
     
     model = create_model(labels.shape[1])
     model.fit(padded_sequences, labels, batch_size=4, epochs=10, validation_split=0.2, callbacks=[EarlyStopping(monitor='val_loss', patience=3, min_delta=0.0001)], class_weight=class_weight_dict)
-    model.save(f'{MODEL_DIR}/{model_name}.keras')
+    model.save(f'{MODEL_DIR}/{model_name}')  # Save as TensorFlow SavedModel format
+
+
+def load_models_and_encoders():
+    global category_model, sub_category_model, type_model
+    global tokenizer, label_encoder_category, label_encoder_sub_category, label_encoder_type
+
+    # Load models
+    category_model = tf.keras.models.load_model(f'{MODEL_DIR}/category')
+    sub_category_model = tf.keras.models.load_model(f'{MODEL_DIR}/sub_category')
+    type_model = tf.keras.models.load_model(f'{MODEL_DIR}/type')
+
+    # Load tokenizer and encoders
+    with open(f'{MODEL_DIR}/tokenizer.pickle', 'rb') as handle:
+        tokenizer = pickle.load(handle)
+    with open(f'{MODEL_DIR}/label_encoder_category.pickle', 'rb') as handle:
+        label_encoder_category = pickle.load(handle)
+    with open(f'{MODEL_DIR}/label_encoder_sub_category.pickle', 'rb') as handle:
+        label_encoder_sub_category = pickle.load(handle)
+    with open(f'{MODEL_DIR}/label_encoder_type.pickle', 'rb') as handle:
+        label_encoder_type = pickle.load(handle)
+
 
 def adjust_predictions_based_on_schema(category, sub_category, type_):
     for cat in schema:
@@ -135,27 +165,14 @@ def train_models(data_path):
     save_object(label_encoder_sub_category, 'label_encoder_sub_category.pickle')
     save_object(label_encoder_type, 'label_encoder_type.pickle')
 
+
 def predict_hierarchy(title):
-    # Load the tokenizer and label encoders
-    with open(f'{MODEL_DIR}/tokenizer.pickle', 'rb') as handle:
-        tokenizer = pickle.load(handle)
-    with open(f'{MODEL_DIR}/label_encoder_category.pickle', 'rb') as handle:
-        label_encoder_category = pickle.load(handle)
-    with open(f'{MODEL_DIR}/label_encoder_sub_category.pickle', 'rb') as handle:
-        label_encoder_sub_category = pickle.load(handle)
-    with open(f'{MODEL_DIR}/label_encoder_type.pickle', 'rb') as handle:
-        label_encoder_type = pickle.load(handle)
-    
     # Preprocess the title
     clean_title_text = clean_title(title)
     sequence = tokenizer.texts_to_sequences([clean_title_text])
     padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN)
     
-    # Load models and make predictions
-    category_model = tf.keras.models.load_model(f'{MODEL_DIR}/category.keras')
-    sub_category_model = tf.keras.models.load_model(f'{MODEL_DIR}/sub_category.keras')
-    type_model = tf.keras.models.load_model(f'{MODEL_DIR}/type.keras')
-    
+    # Make predictions
     category_pred = category_model.predict(padded_sequence)
     sub_category_pred = sub_category_model.predict(padded_sequence)
     type_pred = type_model.predict(padded_sequence)
@@ -170,9 +187,12 @@ def predict_hierarchy(title):
     
     return adjusted_category, adjusted_sub_category, adjusted_type
 
+# Load models and encoders when the module is first imported
+
 # Uncomment the following line to train the models
 # train_models(DATA_PATH)
-predicted_category, predicted_sub_category, predicted_type = predict_hierarchy('La-Z-Boy Burgundy Recliner')
-print(f'CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}' )
+# load_models_and_encoders()
+# predicted_category, predicted_sub_category, predicted_type = predict_hierarchy('La-Z-Boy Burgundy Recliner')
+# print(f'CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}' )
 
 
