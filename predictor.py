@@ -119,8 +119,6 @@ def load_models_and_encoders():
         label_encoder_type = pickle.load(handle)
 
 def adjust_predictions_based_on_schema(category, sub_category, type_):
-    # print(f"Original Prediction - Category: {category}, Sub-Category: {sub_category}, Type: {type_}")
-
     def find_valid_category(category_name):
         for cat in schema:
             if cat['category'] == category_name:
@@ -168,9 +166,8 @@ def adjust_predictions_based_on_schema(category, sub_category, type_):
                     valid_types = find_valid_types(sub_cat, types)
                     adjusted_categories.append(cat)
                     adjusted_sub_categories.append(sub_cat['name'])
-                    adjusted_types.append(', '.join(valid_types))
+                    adjusted_types.extend(valid_types)  # Use extend to add multiple types
             else:
-                # If no valid sub-category found, skip this category
                 continue
         else:
             continue
@@ -181,14 +178,13 @@ def adjust_predictions_based_on_schema(category, sub_category, type_):
         adjusted_sub_categories.append('None')
         adjusted_types.append('None')
 
-    # Remove duplicate values
-    adjusted_categories = list(set(adjusted_categories))
-    adjusted_sub_categories = list(set(adjusted_sub_categories))
-    adjusted_types = list(set(adjusted_types))
-
-    # print(f"Adjusted Prediction - Category: {', '.join(adjusted_categories)}, Sub-Category: {', '.join(adjusted_sub_categories)}, Type: {', '.join(adjusted_types)}")
+    # Remove duplicate values and sort for consistent output
+    adjusted_categories = sorted(set(adjusted_categories))
+    adjusted_sub_categories = sorted(set(adjusted_sub_categories))
+    adjusted_types = sorted(set(adjusted_types))
 
     return ', '.join(adjusted_categories), ', '.join(adjusted_sub_categories), ', '.join(adjusted_types)
+
 
 
 def train_models(data_path):
@@ -240,7 +236,7 @@ def predict_hierarchy(title):
     type_ = label_encoder_type.inverse_transform([np.argmax(type_pred)])[0]
     
     # # Print raw predictions
-    # print(f'Raw Predictions - Category: {category}, Sub-Category: {sub_category}, Type: {type_}')
+    print(f'Raw Predictions - Category: {category}, Sub-Category: {sub_category}, Type: {type_}')
     
     # Adjust predictions based on schema
     adjusted_category, adjusted_sub_category, adjusted_type = adjust_predictions_based_on_schema(category, sub_category, type_)
@@ -251,18 +247,14 @@ def predict_hierarchy(title):
 # Uncomment the following lines to train models and make predictions
 # train_models(DATA_PATH)
 # Uncomment below lines only if you need to test the predictions after training
-# load_models_and_encoders()
+load_models_and_encoders()
 # # Test with examples
-# titles = [
-#     'La-Z-Boy Burgundy Recliner',  # Example title
-#     'Crate & Barrel Woven Rattan Side Dining Chairs, Set of Four',
-#     'Crate & Barrel Avalon Dining Table with 2 IKEA Dining Chairs',
-#     'IKEA Malm Dresser',
-#     'IKEA Billy Bookcase',
-#     'Knoll International by Charles Pollock Executive Armchair Brown Tweed Hopsacking on Casters'
+titles = [
 
-# ]
+    'Modern Wassily Leather and Chrome Club Chair'
 
-# for title in titles:
-#     predicted_category, predicted_sub_category, predicted_type = predict_hierarchy(title)
-#     print(f'Predicted - CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}')
+]
+
+for title in titles:
+    predicted_category, predicted_sub_category, predicted_type = predict_hierarchy(title)
+    print(f'Predicted - CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}')
