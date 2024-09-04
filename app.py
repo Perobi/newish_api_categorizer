@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from predictor import predict_hierarchy, load_models_and_encoders  # Ensure you have this function in `predictor.py`
+from predictor import predict_hierarchy, load_models_and_encoders  # Ensure you have this function in predictor.py
 import os
 
 app = Flask(__name__)

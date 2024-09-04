@@ -80,6 +80,9 @@ def create_model(output_dim):
     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
     return model
 
+def save_model_as_tf(model, model_name):
+    model.save(f'{MODEL_DIR}/{model_name}', save_format='tf')
+
 def save_object(obj, filename):
     if not os.path.exists(MODEL_DIR):
         os.makedirs(MODEL_DIR)
@@ -91,18 +94,19 @@ def train_and_save_model(padded_sequences, labels, model_name, y_integers):
     class_weight_dict = dict(enumerate(class_weights))
     
     model = create_model(labels.shape[1])
-    model.fit(padded_sequences, labels, batch_size=4, epochs=10, validation_split=0.2, callbacks=[EarlyStopping(monitor='val_loss', patience=3, min_delta=0.0001)], class_weight=class_weight_dict)
-    model.save(f'{MODEL_DIR}/{model_name}')  # Save as TensorFlow SavedModel format
-
+    model.fit(padded_sequences, labels, batch_size=4, epochs=10, validation_split=0.2, 
+              callbacks=[EarlyStopping(monitor='val_loss', patience=3, min_delta=0.0001)], 
+              class_weight=class_weight_dict)
+    save_model_as_tf(model, model_name)
 
 def load_models_and_encoders():
     global category_model, sub_category_model, type_model
     global tokenizer, label_encoder_category, label_encoder_sub_category, label_encoder_type
 
     # Load models
-    category_model = tf.keras.models.load_model(f'{MODEL_DIR}/category')
-    sub_category_model = tf.keras.models.load_model(f'{MODEL_DIR}/sub_category')
-    type_model = tf.keras.models.load_model(f'{MODEL_DIR}/type')
+    category_model = tf.keras.models.load_model(f'{MODEL_DIR}/category', custom_objects={'Adam': tf.keras.optimizers.Adam})
+    sub_category_model = tf.keras.models.load_model(f'{MODEL_DIR}/sub_category', custom_objects={'Adam': tf.keras.optimizers.Adam})
+    type_model = tf.keras.models.load_model(f'{MODEL_DIR}/type', custom_objects={'Adam': tf.keras.optimizers.Adam})
 
     # Load tokenizer and encoders
     with open(f'{MODEL_DIR}/tokenizer.pickle', 'rb') as handle:
@@ -113,7 +117,6 @@ def load_models_and_encoders():
         label_encoder_sub_category = pickle.load(handle)
     with open(f'{MODEL_DIR}/label_encoder_type.pickle', 'rb') as handle:
         label_encoder_type = pickle.load(handle)
-
 
 def adjust_predictions_based_on_schema(category, sub_category, type_):
     for cat in schema:
@@ -165,7 +168,6 @@ def train_models(data_path):
     save_object(label_encoder_sub_category, 'label_encoder_sub_category.pickle')
     save_object(label_encoder_type, 'label_encoder_type.pickle')
 
-
 def predict_hierarchy(title):
     # Preprocess the title
     clean_title_text = clean_title(title)
@@ -187,12 +189,9 @@ def predict_hierarchy(title):
     
     return adjusted_category, adjusted_sub_category, adjusted_type
 
-# Load models and encoders when the module is first imported
-
-# Uncomment the following line to train the models
+# Uncomment the following lines to train models and make predictions
 # train_models(DATA_PATH)
+# Uncomment below lines only if you need to test the predictions after training
 # load_models_and_encoders()
 # predicted_category, predicted_sub_category, predicted_type = predict_hierarchy('La-Z-Boy Burgundy Recliner')
-# print(f'CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}' )
-
-
+# print(f'CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}')
