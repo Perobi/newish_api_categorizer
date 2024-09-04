@@ -141,9 +141,7 @@ def adjust_predictions_based_on_schema(category, sub_category, type_):
             for type_name in type_names:
                 if type_name in available_types:
                     valid_types.append(type_name)
-                elif available_types:
-                    # Use the first available type if none match
-                    valid_types.append(available_types[0])
+                # Ensure that only valid types are considered
         return valid_types or ['None']
 
     # Split the predictions into lists
@@ -158,34 +156,30 @@ def adjust_predictions_based_on_schema(category, sub_category, type_):
     for cat in categories:
         category_schema = find_valid_category(cat)
         if category_schema:
-            # Check for valid sub-categories
             valid_sub_categories = find_valid_sub_categories(category_schema, sub_categories)
             if valid_sub_categories:
                 for sub_cat in valid_sub_categories:
-                    # Check for valid types for each valid sub-category
                     valid_types = find_valid_types(sub_cat, types)
                     adjusted_categories.append(cat)
                     adjusted_sub_categories.append(sub_cat['name'])
-                    adjusted_types.extend(valid_types)  # Use extend to add multiple types
+                    adjusted_types.extend(valid_types)
             else:
+                # Continue only if no valid sub-categories are found
                 continue
         else:
+            # Continue only if no valid categories are found
             continue
 
-    # If no valid categories are found, set all to 'None'
     if not adjusted_categories:
         adjusted_categories.append('None')
         adjusted_sub_categories.append('None')
         adjusted_types.append('None')
 
-    # Remove duplicate values and sort for consistent output
     adjusted_categories = sorted(set(adjusted_categories))
     adjusted_sub_categories = sorted(set(adjusted_sub_categories))
     adjusted_types = sorted(set(adjusted_types))
 
     return ', '.join(adjusted_categories), ', '.join(adjusted_sub_categories), ', '.join(adjusted_types)
-
-
 
 def train_models(data_path):
     tf.keras.backend.clear_session()
@@ -235,7 +229,7 @@ def predict_hierarchy(title):
     sub_category = label_encoder_sub_category.inverse_transform([np.argmax(sub_category_pred)])[0]
     type_ = label_encoder_type.inverse_transform([np.argmax(type_pred)])[0]
     
-    # # Print raw predictions
+    # Print raw predictions
     # print(f'Raw Predictions - Category: {category}, Sub-Category: {sub_category}, Type: {type_}')
     
     # Adjust predictions based on schema
