@@ -236,7 +236,7 @@ def predict_hierarchy(title):
     type_ = label_encoder_type.inverse_transform([np.argmax(type_pred)])[0]
     
     # # Print raw predictions
-    print(f'Raw Predictions - Category: {category}, Sub-Category: {sub_category}, Type: {type_}')
+    # print(f'Raw Predictions - Category: {category}, Sub-Category: {sub_category}, Type: {type_}')
     
     # Adjust predictions based on schema
     adjusted_category, adjusted_sub_category, adjusted_type = adjust_predictions_based_on_schema(category, sub_category, type_)
@@ -247,14 +247,14 @@ def predict_hierarchy(title):
 # Uncomment the following lines to train models and make predictions
 # train_models(DATA_PATH)
 # Uncomment below lines only if you need to test the predictions after training
-load_models_and_encoders()
-# # Test with examples
-titles = [
+# load_models_and_encoders()
+# # # Test with examples
+# titles = [
 
-    'Modern Wassily Leather and Chrome Club Chair'
+#     'Modern Wassily Leather and Chrome Club Chair'
 
-]
+# ]
 
-for title in titles:
-    predicted_category, predicted_sub_category, predicted_type = predict_hierarchy(title)
-    print(f'Predicted - CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}')
+# for title in titles:
+#     predicted_category, predicted_sub_category, predicted_type = predict_hierarchy(title)
+#     print(f'Predicted - CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}')
