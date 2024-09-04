@@ -119,6 +119,7 @@ def load_models_and_encoders():
         label_encoder_type = pickle.load(handle)
 
 def adjust_predictions_based_on_schema(category, sub_category, type_):
+    # print(f"Original Prediction - Category: {category}, Sub-Category: {sub_category}, Type: {type_}")
 
     def find_valid_category(category_name):
         for cat in schema:
@@ -126,19 +127,26 @@ def adjust_predictions_based_on_schema(category, sub_category, type_):
                 return cat
         return None
 
-    def find_valid_sub_category(category_schema, sub_category_name):
-        for sub in category_schema.get('subCategories', []):
-            if sub['name'] == sub_category_name:
-                return sub
-        return None
+    def find_valid_sub_categories(category_schema, sub_category_names):
+        valid_sub_categories = []
+        for sub_name in sub_category_names:
+            for sub in category_schema.get('subCategories', []):
+                if sub['name'] == sub_name:
+                    valid_sub_categories.append(sub)
+                    break
+        return valid_sub_categories
 
-    def find_valid_type(sub_category_schema, type_name):
+    def find_valid_types(sub_category_schema, type_names):
+        valid_types = []
         if 'types' in sub_category_schema:
-            valid_types = [t['name'] for t in sub_category_schema['types']]
-            if type_name in valid_types:
-                return type_name
-            return valid_types[0] if valid_types else 'None'
-        return 'None'
+            available_types = [t['name'] for t in sub_category_schema['types']]
+            for type_name in type_names:
+                if type_name in available_types:
+                    valid_types.append(type_name)
+                elif available_types:
+                    # Use the first available type if none match
+                    valid_types.append(available_types[0])
+        return valid_types or ['None']
 
     # Split the predictions into lists
     categories = [cat.strip() for cat in category.split(',') if cat.strip()]
@@ -152,38 +160,36 @@ def adjust_predictions_based_on_schema(category, sub_category, type_):
     for cat in categories:
         category_schema = find_valid_category(cat)
         if category_schema:
-            # Check if we have a valid sub-category
-            if sub_categories:
-                sub_cat = sub_categories[0]  # Take the first sub-category for simplicity
-                sub_category_schema = find_valid_sub_category(category_schema, sub_cat)
-                if sub_category_schema:
-                    # Check if we have a valid type
-                    if types:
-                        typ = types[0]  # Take the first type for simplicity
-                        valid_type = find_valid_type(sub_category_schema, typ)
-                        adjusted_categories.append(cat)
-                        adjusted_sub_categories.append(sub_cat)
-                        adjusted_types.append(valid_type)
-                    else:
-                        adjusted_categories.append(cat)
-                        adjusted_sub_categories.append(sub_cat)
-                        adjusted_types.append('None')
-                else:
-                    # If sub-category is not valid, discard this category
-                    continue
+            # Check for valid sub-categories
+            valid_sub_categories = find_valid_sub_categories(category_schema, sub_categories)
+            if valid_sub_categories:
+                for sub_cat in valid_sub_categories:
+                    # Check for valid types for each valid sub-category
+                    valid_types = find_valid_types(sub_cat, types)
+                    adjusted_categories.append(cat)
+                    adjusted_sub_categories.append(sub_cat['name'])
+                    adjusted_types.append(', '.join(valid_types))
             else:
-                # If no sub-category is predicted, discard this category
+                # If no valid sub-category found, skip this category
                 continue
         else:
             continue
-    
+
     # If no valid categories are found, set all to 'None'
     if not adjusted_categories:
         adjusted_categories.append('None')
         adjusted_sub_categories.append('None')
         adjusted_types.append('None')
 
+    # Remove duplicate values
+    adjusted_categories = list(set(adjusted_categories))
+    adjusted_sub_categories = list(set(adjusted_sub_categories))
+    adjusted_types = list(set(adjusted_types))
+
+    # print(f"Adjusted Prediction - Category: {', '.join(adjusted_categories)}, Sub-Category: {', '.join(adjusted_sub_categories)}, Type: {', '.join(adjusted_types)}")
+
     return ', '.join(adjusted_categories), ', '.join(adjusted_sub_categories), ', '.join(adjusted_types)
+
 
 def train_models(data_path):
     tf.keras.backend.clear_session()
@@ -233,6 +239,9 @@ def predict_hierarchy(title):
     sub_category = label_encoder_sub_category.inverse_transform([np.argmax(sub_category_pred)])[0]
     type_ = label_encoder_type.inverse_transform([np.argmax(type_pred)])[0]
     
+    # # Print raw predictions
+    # print(f'Raw Predictions - Category: {category}, Sub-Category: {sub_category}, Type: {type_}')
+    
     # Adjust predictions based on schema
     adjusted_category, adjusted_sub_category, adjusted_type = adjust_predictions_based_on_schema(category, sub_category, type_)
     
@@ -243,7 +252,7 @@ def predict_hierarchy(title):
 # train_models(DATA_PATH)
 # Uncomment below lines only if you need to test the predictions after training
 # load_models_and_encoders()
-# Test with examples
+# # Test with examples
 # titles = [
 #     'La-Z-Boy Burgundy Recliner',  # Example title
 #     'Crate & Barrel Woven Rattan Side Dining Chairs, Set of Four',
