@@ -119,7 +119,6 @@ def load_models_and_encoders():
         label_encoder_type = pickle.load(handle)
 
 def adjust_predictions_based_on_schema(category, sub_category, type_):
-    print(f"Original Prediction - Category: {category}, Sub-Category: {sub_category}, Type: {type_}")
 
     def find_valid_category(category_name):
         for cat in schema:
@@ -184,8 +183,6 @@ def adjust_predictions_based_on_schema(category, sub_category, type_):
         adjusted_sub_categories.append('None')
         adjusted_types.append('None')
 
-    print(f"Adjusted Prediction - Category: {', '.join(adjusted_categories)}, Sub-Category: {', '.join(adjusted_sub_categories)}, Type: {', '.join(adjusted_types)}")
-
     return ', '.join(adjusted_categories), ', '.join(adjusted_sub_categories), ', '.join(adjusted_types)
 
 def train_models(data_path):
@@ -235,9 +232,6 @@ def predict_hierarchy(title):
     category = label_encoder_category.inverse_transform([np.argmax(category_pred)])[0]
     sub_category = label_encoder_sub_category.inverse_transform([np.argmax(sub_category_pred)])[0]
     type_ = label_encoder_type.inverse_transform([np.argmax(type_pred)])[0]
-    
-    # Print raw predictions
-    print(f'Raw Predictions - Category: {category}, Sub-Category: {sub_category}, Type: {type_}')
     
     # Adjust predictions based on schema
     adjusted_category, adjusted_sub_category, adjusted_type = adjust_predictions_based_on_schema(category, sub_category, type_)
