@@ -9,13 +9,17 @@ load_models_and_encoders()
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    content = request.json
-    title = content.get('title')
-    if not title:
-        return jsonify({'error': 'No title provided'}), 400
-   
-    predicted_category, predicted_sub_category, predicted_type = predict_hierarchy(title)
-    return jsonify({'category': predicted_category, 'sub_category': predicted_sub_category, 'type': predicted_type}), 200
+    try: 
+        content = request.json
+        title = content.get('title')
+        if not title:
+            return jsonify({'error': 'No title provided'}), 400
+    
+        predicted_category, predicted_sub_category, predicted_type = predict_hierarchy(title)
+        return jsonify({'category': predicted_category, 'sub_category': predicted_sub_category, 'type': predicted_type}), 200
+    except Exception as e:
+        app.logger.error(f'Error occurred: {e}')
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))  # default port is 5000 for local development
