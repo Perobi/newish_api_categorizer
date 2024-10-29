@@ -246,7 +246,7 @@ def predict_hierarchy(title):
         type_idx = max(filtered_type_pred, key=lambda x: x[1])[0]
         type_ = label_encoder_type.inverse_transform([type_idx])[0]
     else:
-        type_ = 'None'
+        type_ = ''
     
     # Adjust based on schema for any final mismatches
     adjusted_category, adjusted_sub_category, adjusted_type = adjust_predictions_based_on_schema(category, sub_category, type_)
@@ -262,10 +262,12 @@ load_models_and_encoders()
 # # Test with examples
 titles = [
 
-    'Modern Wassily Leather and Chrome Club Chair',
-    "BR Home Hugo Swivel Lounge Chair (We Have 2)",
-    "Pair of Vintage Mid-Century Modern Swivel Chairs",
-    "Br Home Sydney Coffee Table",
+    'BR Home Zermatt Armchair',
+    'BR Home Mirza Sphere Pendant (We Have 2)',
+    'Red Lacquered Mid Century Chair w/ Boucle Fabric (We Have 2)',
+    "Haworth Zody Mesh Office Chair", 
+    "Acrylic Bench on Wheels and Colorful Fabric",
+    "Custom Pink Flower Repeat Fabric Armchair ((Sold Individually//We Have 2)"
 
 ]
 
