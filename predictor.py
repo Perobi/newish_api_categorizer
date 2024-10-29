@@ -219,36 +219,56 @@ def predict_hierarchy(title):
     sequence = tokenizer.texts_to_sequences([clean_title_text])
     padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN)
     
-    # Make predictions
+    # Make initial predictions
     category_pred = category_model.predict(padded_sequence)
-    sub_category_pred = sub_category_model.predict(padded_sequence)
-    type_pred = type_model.predict(padded_sequence)
-    
-    # Convert predictions to labels
     category = label_encoder_category.inverse_transform([np.argmax(category_pred)])[0]
-    sub_category = label_encoder_sub_category.inverse_transform([np.argmax(sub_category_pred)])[0]
-    type_ = label_encoder_type.inverse_transform([np.argmax(type_pred)])[0]
     
-    # Print raw predictions
-    # print(f'Raw Predictions - Category: {category}, Sub-Category: {sub_category}, Type: {type_}')
+    # Mask irrelevant subcategory predictions based on category
+    sub_category_pred = sub_category_model.predict(padded_sequence)
+    possible_sub_categories = [sc for sc in schema if sc['category'] == category][0]['subCategories']
+    filtered_sub_category_pred = [
+        (idx, pred) for idx, pred in enumerate(sub_category_pred[0]) 
+        if label_encoder_sub_category.inverse_transform([idx])[0] in [sc['name'] for sc in possible_sub_categories]
+    ]
+    # Pick the subcategory with the highest probability
+    sub_category_idx = max(filtered_sub_category_pred, key=lambda x: x[1])[0]
+    sub_category = label_encoder_sub_category.inverse_transform([sub_category_idx])[0]
     
-    # Adjust predictions based on schema
+    # Mask irrelevant type predictions based on subcategory
+    type_pred = type_model.predict(padded_sequence)
+    sub_category_schema = next((sc for sc in possible_sub_categories if sc['name'] == sub_category), None)
+    if sub_category_schema and 'types' in sub_category_schema:
+        possible_types = [t['name'] for t in sub_category_schema['types']]
+        filtered_type_pred = [
+            (idx, pred) for idx, pred in enumerate(type_pred[0])
+            if label_encoder_type.inverse_transform([idx])[0] in possible_types
+        ]
+        type_idx = max(filtered_type_pred, key=lambda x: x[1])[0]
+        type_ = label_encoder_type.inverse_transform([type_idx])[0]
+    else:
+        type_ = 'None'
+    
+    # Adjust based on schema for any final mismatches
     adjusted_category, adjusted_sub_category, adjusted_type = adjust_predictions_based_on_schema(category, sub_category, type_)
     
     return adjusted_category, adjusted_sub_category, adjusted_type
 
 
+
 # Uncomment the following lines to train models and make predictions
 # train_models(DATA_PATH)
 # Uncomment below lines only if you need to test the predictions after training
-# load_models_and_encoders()
-# # # Test with examples
-# titles = [
+load_models_and_encoders()
+# # Test with examples
+titles = [
 
-#     'Modern Wassily Leather and Chrome Club Chair'
+    'Modern Wassily Leather and Chrome Club Chair',
+    "BR Home Hugo Swivel Lounge Chair (We Have 2)",
+    "Pair of Vintage Mid-Century Modern Swivel Chairs",
+    "Br Home Sydney Coffee Table",
 
-# ]
+]
 
-# for title in titles:
-#     predicted_category, predicted_sub_category, predicted_type = predict_hierarchy(title)
-#     print(f'Predicted - CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}')
+for title in titles:
+    predicted_category, predicted_sub_category, predicted_type = predict_hierarchy(title)
+    print(f'Predicted - CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}')
