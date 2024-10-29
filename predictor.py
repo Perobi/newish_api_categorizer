@@ -258,19 +258,19 @@ def predict_hierarchy(title):
 # Uncomment the following lines to train models and make predictions
 # train_models(DATA_PATH)
 # Uncomment below lines only if you need to test the predictions after training
-load_models_and_encoders()
-# # Test with examples
-titles = [
+# load_models_and_encoders()
+# # # Test with examples
+# titles = [
 
-    'BR Home Zermatt Armchair',
-    'BR Home Mirza Sphere Pendant (We Have 2)',
-    'Red Lacquered Mid Century Chair w/ Boucle Fabric (We Have 2)',
-    "Haworth Zody Mesh Office Chair", 
-    "Acrylic Bench on Wheels and Colorful Fabric",
-    "Custom Pink Flower Repeat Fabric Armchair ((Sold Individually//We Have 2)"
+#     'BR Home Zermatt Armchair',
+#     'BR Home Mirza Sphere Pendant (We Have 2)',
+#     'Red Lacquered Mid Century Chair w/ Boucle Fabric (We Have 2)',
+#     "Haworth Zody Mesh Office Chair", 
+#     "Acrylic Bench on Wheels and Colorful Fabric",
+#     "Custom Pink Flower Repeat Fabric Armchair ((Sold Individually//We Have 2)"
 
-]
+# ]
 
-for title in titles:
-    predicted_category, predicted_sub_category, predicted_type = predict_hierarchy(title)
-    print(f'Predicted - CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}')
+# for title in titles:
+#     predicted_category, predicted_sub_category, predicted_type = predict_hierarchy(title)
+#     print(f'Predicted - CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}')
