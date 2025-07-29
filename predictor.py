@@ -26,6 +26,7 @@ mlb_category = None
 mlb_sub_category = None
 mlb_type = None
 _models_loaded = False
+_loading_lock = False  # Prevent multiple simultaneous loads
 
 def parse_multi_labels(label_string):
     """Parse multi-label strings into lists."""
@@ -113,29 +114,51 @@ def train_hierarchical_model(padded_sequences, category_labels, sub_category_lab
     save_model_as_tf(model, 'hierarchical_model')
 
 def load_models_and_encoders():
-    """Load models and encoders - now with lazy loading."""
-    global hierarchical_model, tokenizer, mlb_category, mlb_sub_category, mlb_type, _models_loaded
+    """Load models and encoders - now with lazy loading and thread safety."""
+    global hierarchical_model, tokenizer, mlb_category, mlb_sub_category, mlb_type, _models_loaded, _loading_lock
     
     if _models_loaded:
         return  # Already loaded
     
-    print("Loading hierarchical models and encoders...")
+    # Prevent multiple simultaneous loads
+    if _loading_lock:
+        # Wait for another thread to finish loading
+        import time
+        while _loading_lock:
+            time.sleep(0.1)
+        return  # Models should now be loaded
     
-    # Load hierarchical model
-    hierarchical_model = tf.keras.models.load_model(f'{MODEL_DIR}/hierarchical_model', custom_objects={'Adam': tf.keras.optimizers.Adam})
-
-    # Load tokenizer and binarizers
-    with open(f'{MODEL_DIR}/tokenizer.pickle', 'rb') as handle:
-        tokenizer = pickle.load(handle)
-    with open(f'{MODEL_DIR}/mlb_category.pickle', 'rb') as handle:
-        mlb_category = pickle.load(handle)
-    with open(f'{MODEL_DIR}/mlb_sub_category.pickle', 'rb') as handle:
-        mlb_sub_category = pickle.load(handle)
-    with open(f'{MODEL_DIR}/mlb_type.pickle', 'rb') as handle:
-        mlb_type = pickle.load(handle)
+    _loading_lock = True
     
-    _models_loaded = True
-    print("✅ Models loaded successfully!")
+    try:
+        print("Loading hierarchical models and encoders...")
+        
+        # Load hierarchical model with memory optimization
+        tf.keras.backend.clear_session()  # Clear any existing models
+        hierarchical_model = tf.keras.models.load_model(
+            f'{MODEL_DIR}/hierarchical_model', 
+            custom_objects={'Adam': tf.keras.optimizers.Adam}
+        )
+        
+        # Load tokenizer and binarizers
+        with open(f'{MODEL_DIR}/tokenizer.pickle', 'rb') as handle:
+            tokenizer = pickle.load(handle)
+        with open(f'{MODEL_DIR}/mlb_category.pickle', 'rb') as handle:
+            mlb_category = pickle.load(handle)
+        with open(f'{MODEL_DIR}/mlb_sub_category.pickle', 'rb') as handle:
+            mlb_sub_category = pickle.load(handle)
+        with open(f'{MODEL_DIR}/mlb_type.pickle', 'rb') as handle:
+            mlb_type = pickle.load(handle)
+        
+        _models_loaded = True
+        print("✅ Models loaded successfully!")
+        
+    except Exception as e:
+        print(f"❌ Error loading models: {e}")
+        _models_loaded = False
+        raise
+    finally:
+        _loading_lock = False
 
 def train_models(data_path):
     """Train hierarchical multi-label classification models."""
@@ -179,41 +202,83 @@ def train_models(data_path):
 
 def predict_hierarchy(title):
     """Predict hierarchical categories using the trained model."""
+    global _models_loaded
+    
     # Lazy load models if not already loaded
     if not _models_loaded:
         load_models_and_encoders()
     
-    # Preprocess the title
-    clean_title_text = clean_title(title)
-    sequence = tokenizer.texts_to_sequences([clean_title_text])
-    padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN)
+    # Verify models are loaded
+    if not _models_loaded or hierarchical_model is None:
+        raise RuntimeError("Models failed to load properly")
     
-    # Make predictions
-    category_pred, sub_category_pred, type_pred = hierarchical_model.predict(padded_sequence)
-    
-    # Convert predictions to labels with adaptive thresholds
-    category_threshold = 0.25
-    sub_category_threshold = 0.25
-    type_threshold = 0.25
-    
-    # Get predicted categories
-    category_indices = np.where(category_pred[0] > category_threshold)[0]
-    predicted_categories = mlb_category.classes_[category_indices]
-    
-    # Get predicted sub-categories
-    sub_category_indices = np.where(sub_category_pred[0] > sub_category_threshold)[0]
-    predicted_sub_categories = mlb_sub_category.classes_[sub_category_indices]
-    
-    # Get predicted types
-    type_indices = np.where(type_pred[0] > type_threshold)[0]
-    predicted_types = mlb_type.classes_[type_indices]
-    
-    # Join multiple predictions
-    category_str = ', '.join(predicted_categories) if len(predicted_categories) > 0 else 'None'
-    sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
-    type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
-    
-    return category_str, sub_category_str, type_str
+    try:
+        # Preprocess the title
+        clean_title_text = clean_title(title)
+        sequence = tokenizer.texts_to_sequences([clean_title_text])
+        padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN)
+        
+        # Make predictions with memory optimization
+        category_pred, sub_category_pred, type_pred = hierarchical_model.predict(
+            padded_sequence, 
+            verbose=0  # Reduce logging output
+        )
+        
+        # Convert predictions to labels with adaptive thresholds
+        category_threshold = 0.25
+        sub_category_threshold = 0.25
+        type_threshold = 0.25
+        
+        # Get predicted categories
+        category_indices = np.where(category_pred[0] > category_threshold)[0]
+        predicted_categories = mlb_category.classes_[category_indices]
+        
+        # Get predicted sub-categories
+        sub_category_indices = np.where(sub_category_pred[0] > sub_category_threshold)[0]
+        predicted_sub_categories = mlb_sub_category.classes_[sub_category_indices]
+        
+        # Get predicted types
+        type_indices = np.where(type_pred[0] > type_threshold)[0]
+        predicted_types = mlb_type.classes_[type_indices]
+        
+        # Join multiple predictions
+        category_str = ', '.join(predicted_categories) if len(predicted_categories) > 0 else 'None'
+        sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
+        type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
+        
+        return category_str, sub_category_str, type_str
+        
+    except Exception as e:
+        # If prediction fails, try to reload models and retry once
+        if _models_loaded:
+            print(f"⚠️ Prediction failed, attempting model reload: {e}")
+            _models_loaded = False
+            load_models_and_encoders()
+            
+            # Retry prediction
+            clean_title_text = clean_title(title)
+            sequence = tokenizer.texts_to_sequences([clean_title_text])
+            padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN)
+            
+            category_pred, sub_category_pred, type_pred = hierarchical_model.predict(padded_sequence, verbose=0)
+            
+            # Process predictions (same logic as above)
+            category_indices = np.where(category_pred[0] > category_threshold)[0]
+            predicted_categories = mlb_category.classes_[category_indices]
+            
+            sub_category_indices = np.where(sub_category_pred[0] > sub_category_threshold)[0]
+            predicted_sub_categories = mlb_sub_category.classes_[sub_category_indices]
+            
+            type_indices = np.where(type_pred[0] > type_threshold)[0]
+            predicted_types = mlb_type.classes_[type_indices]
+            
+            category_str = ', '.join(predicted_categories) if len(predicted_categories) > 0 else 'None'
+            sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
+            type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
+            
+            return category_str, sub_category_str, type_str
+        else:
+            raise e
 
 # Uncomment to train models
 # train_models(DATA_PATH) 
