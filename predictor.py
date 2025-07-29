@@ -16,8 +16,8 @@ from clean_data import clean_title
 # Global constants
 DATA_PATH = './data/raw_data/kashew_supervised_products.csv'
 MODEL_DIR = './model'
-MAX_WORDS = 5000
-MAX_LEN = 50
+MAX_WORDS = 3000  # Reduced from 5000 to save memory
+MAX_LEN = 30      # Reduced from 50 to save memory
 
 # Global variables for models and encoders
 hierarchical_model = None
@@ -39,30 +39,30 @@ def create_hierarchical_model(output_dims):
     # Input layer
     input_layer = Input(shape=(MAX_LEN,))
     
-    # Shared embedding and LSTM layers
-    embedding = Embedding(MAX_WORDS, 64)(input_layer)
+    # Shared embedding and LSTM layers (reduced sizes for memory)
+    embedding = Embedding(MAX_WORDS, 32)(input_layer)  # Reduced from 64 to 32
     dropout1 = SpatialDropout1D(0.2)(embedding)
-    lstm = LSTM(128, dropout=0.2, recurrent_dropout=0.2, return_sequences=True)(dropout1)
+    lstm = LSTM(64, dropout=0.2, recurrent_dropout=0.2, return_sequences=True)(dropout1)  # Reduced from 128 to 64
     
     # Extract features from LSTM
-    lstm_features = LSTM(64, dropout=0.2, recurrent_dropout=0.2)(lstm)
+    lstm_features = LSTM(32, dropout=0.2, recurrent_dropout=0.2)(lstm)  # Reduced from 64 to 32
     
     # Category prediction (parent level)
-    category_dense = Dense(128, activation='relu')(lstm_features)
+    category_dense = Dense(64, activation='relu')(lstm_features)  # Reduced from 128 to 64
     category_dropout = Dropout(0.3)(category_dense)
     category_output = Dense(output_dims['category'], activation='sigmoid')(category_dropout)
     
     # Sub-category prediction (child level) - influenced by category predictions
-    sub_category_dense = Dense(128, activation='relu')(lstm_features)
+    sub_category_dense = Dense(64, activation='relu')(lstm_features)  # Reduced from 128 to 64
     # Concatenate with category predictions for hierarchy
-    category_embedding = Dense(64, activation='relu')(category_output)
+    category_embedding = Dense(32, activation='relu')(category_output)  # Reduced from 64 to 32
     sub_category_combined = Concatenate()([sub_category_dense, category_embedding])
     sub_category_dropout = Dropout(0.3)(sub_category_combined)
     sub_category_output = Dense(output_dims['sub_category'], activation='sigmoid')(sub_category_dropout)
     
     # Type prediction (grandchild level) - influenced by both category and sub-category
-    type_dense = Dense(128, activation='relu')(lstm_features)
-    sub_category_embedding = Dense(64, activation='relu')(sub_category_output)
+    type_dense = Dense(64, activation='relu')(lstm_features)  # Reduced from 128 to 64
+    sub_category_embedding = Dense(32, activation='relu')(sub_category_output)  # Reduced from 64 to 32
     type_combined = Concatenate()([type_dense, category_embedding, sub_category_embedding])
     type_dropout = Dropout(0.3)(type_combined)
     type_output = Dense(output_dims['type'], activation='sigmoid')(type_dropout)
@@ -137,6 +137,15 @@ def load_models_and_encoders():
         tf.keras.backend.clear_session()  # Clear any existing models
         import gc
         gc.collect()  # Force garbage collection
+        
+        # Set TensorFlow memory growth to prevent memory issues
+        gpus = tf.config.experimental.list_physical_devices('GPU')
+        if gpus:
+            try:
+                for gpu in gpus:
+                    tf.config.experimental.set_memory_growth(gpu, True)
+            except RuntimeError as e:
+                print(f"GPU memory growth setting failed: {e}")
         
         # Load hierarchical model with memory optimization
         hierarchical_model = tf.keras.models.load_model(

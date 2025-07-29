@@ -66,6 +66,10 @@ def health():
         # Memory warning if usage is high
         if memory_info['memory_percent'] > 80:
             logger.warning(f"High memory usage: {memory_info['memory_percent']:.1f}%")
+        
+        # Check if we're approaching Heroku's 1GB limit
+        if memory_info['memory_used_mb'] > 900:
+            logger.warning(f"Approaching Heroku memory limit: {memory_info['memory_used_mb']:.1f} MB")
             
     except ImportError:
         memory_info = {'note': 'psutil not available'}
@@ -74,7 +78,8 @@ def health():
         'status': 'healthy', 
         'model': 'hierarchical_multi_label',
         'memory': memory_info,
-        'models_loaded': _models_initialized
+        'models_loaded': _models_initialized,
+        'memory_optimized': True
     }), 200
 
 
