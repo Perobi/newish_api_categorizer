@@ -295,51 +295,86 @@ def unload_models():
         _models_unloaded = True
 
 def validate_hierarchy_prediction(category_pred, sub_category_pred, type_pred, title):
-    """Validate and correct hierarchy predictions"""
-    # Get predicted indices
-    category_threshold = 0.25
-    sub_category_threshold = 0.25
-    type_threshold = 0.25
-    
-    category_indices = np.where(category_pred[0] > category_threshold)[0]
-    sub_category_indices = np.where(sub_category_pred[0] > sub_category_threshold)[0]
-    type_indices = np.where(type_pred[0] > type_threshold)[0]
-    
-    # Get predicted labels
-    predicted_categories = mlb_category.classes_[category_indices]
-    predicted_sub_categories = mlb_sub_category.classes_[sub_category_indices]
-    predicted_types = mlb_type.classes_[type_indices]
-    
-    # Hierarchy validation and correction
-    title_lower = title.lower()
-    
-    # Rule 1: Art pieces should be Decor, not Seating
-    if any(art_word in title_lower for art_word in ['art', 'painting', 'triptych', 'print', 'canvas']):
-        if 'Seating' in predicted_categories:
-            predicted_categories = [cat for cat in predicted_categories if cat != 'Seating']
-            if 'Decor' not in predicted_categories:
-                predicted_categories.append('Decor')
-    
-    # Rule 2: If type is "Sofas", sub-category must be "Sofas"
-    if 'Sofas' in predicted_types and 'Sofas' not in predicted_sub_categories:
-        predicted_sub_categories.append('Sofas')
-    
-    # Rule 3: If sub-category is "Sofas", category must include "Seating"
-    if 'Sofas' in predicted_sub_categories and 'Seating' not in predicted_categories:
-        predicted_categories.append('Seating')
-    
-    # Rule 4: Prevent impossible combinations
-    if 'Decor' in predicted_categories and 'Seating' in predicted_categories:
-        # For art pieces, keep only Decor
-        if any(art_word in title_lower for art_word in ['art', 'painting', 'triptych', 'print', 'canvas']):
-            predicted_categories = [cat for cat in predicted_categories if cat != 'Seating']
-    
-    # Join predictions
-    category_str = ', '.join(predicted_categories) if len(predicted_categories) > 0 else 'None'
-    sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
-    type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
-    
-    return category_str, sub_category_str, type_str
+    """Dynamically validate and correct hierarchy predictions based on actual data constraints"""
+    try:
+        # Convert predictions to lists of predicted classes
+        category_classes = [cls for cls, pred in zip(mlb_category.classes_, category_pred[0]) if pred > 0.5]
+        sub_category_classes = [cls for cls, pred in zip(mlb_sub_category.classes_, sub_category_pred[0]) if pred > 0.5]
+        type_classes = [cls for cls, pred in zip(mlb_type.classes_, type_pred[0]) if pred > 0.5]
+        
+        # If no predictions, return empty
+        if not category_classes and not sub_category_classes and not type_classes:
+            return "", "", ""
+        
+        # Dynamic validation based on actual hierarchy constraints
+        validated_categories = []
+        validated_sub_categories = []
+        validated_types = []
+        
+        # For each predicted category, ensure it has valid sub-categories
+        for category in category_classes:
+            if category in HIERARCHY_CONSTRAINTS['category_to_subcategory']:
+                valid_subs = HIERARCHY_CONSTRAINTS['category_to_subcategory'][category]
+                # Keep only sub-categories that are valid for this category
+                for sub_cat in sub_category_classes:
+                    if sub_cat in valid_subs:
+                        validated_sub_categories.append(sub_cat)
+                validated_categories.append(category)
+        
+        # For each predicted sub-category, ensure it has valid types
+        for sub_category in validated_sub_categories:
+            if sub_category in HIERARCHY_CONSTRAINTS['subcategory_to_type']:
+                valid_types = HIERARCHY_CONSTRAINTS['subcategory_to_type'][sub_category]
+                # Keep only types that are valid for this sub-category
+                for type_val in type_classes:
+                    if type_val in valid_types:
+                        validated_types.append(type_val)
+        
+        # If we have sub-categories but no categories, infer categories
+        if not validated_categories and validated_sub_categories:
+            for sub_cat in validated_sub_categories:
+                for category, valid_subs in HIERARCHY_CONSTRAINTS['category_to_subcategory'].items():
+                    if sub_cat in valid_subs and category not in validated_categories:
+                        validated_categories.append(category)
+        
+        # If we have types but no sub-categories, infer sub-categories
+        if not validated_sub_categories and validated_types:
+            for type_val in validated_types:
+                for sub_cat, valid_types_list in HIERARCHY_CONSTRAINTS['subcategory_to_type'].items():
+                    if type_val in valid_types_list and sub_cat not in validated_sub_categories:
+                        validated_sub_categories.append(sub_cat)
+                        # Also infer the category for this sub-category
+                        for category, valid_subs in HIERARCHY_CONSTRAINTS['category_to_subcategory'].items():
+                            if sub_cat in valid_subs and category not in validated_categories:
+                                validated_categories.append(category)
+        
+        # Remove duplicates while preserving order
+        validated_categories = list(dict.fromkeys(validated_categories))
+        validated_sub_categories = list(dict.fromkeys(validated_sub_categories))
+        validated_types = list(dict.fromkeys(validated_types))
+        
+        # Convert back to strings
+        category_str = ", ".join(validated_categories) if validated_categories else ""
+        sub_category_str = ", ".join(validated_sub_categories) if validated_sub_categories else ""
+        type_str = ", ".join(validated_types) if validated_types else ""
+        
+        return category_str, sub_category_str, type_str
+        
+    except Exception as e:
+        print(f"⚠️ Error in hierarchy validation: {e}")
+        # Fallback: return raw predictions without validation
+        try:
+            category_classes = [cls for cls, pred in zip(mlb_category.classes_, category_pred[0]) if pred > 0.5]
+            sub_category_classes = [cls for cls, pred in zip(mlb_sub_category.classes_, sub_category_pred[0]) if pred > 0.5]
+            type_classes = [cls for cls, pred in zip(mlb_type.classes_, type_pred[0]) if pred > 0.5]
+            
+            category_str = ", ".join(category_classes) if category_classes else ""
+            sub_category_str = ", ".join(sub_category_classes) if sub_category_classes else ""
+            type_str = ", ".join(type_classes) if type_classes else ""
+            
+            return category_str, sub_category_str, type_str
+        except:
+            return "", "", ""
 
 def train_models(data_path):
     """Train hierarchy-constrained multi-label classification models."""
