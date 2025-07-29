@@ -41,7 +41,7 @@ def parse_multi_labels(label_string):
     return [label.strip() for label in str(label_string).split(',') if label.strip()]
 
 def create_hierarchical_model(output_dims):
-    """Create a memory-efficient hierarchical model."""
+    """Create a memory-efficient hierarchical model with proper hierarchy."""
     # Input layer
     input_layer = Input(shape=(MAX_LEN,))
     
@@ -49,28 +49,32 @@ def create_hierarchical_model(output_dims):
     embedding = Embedding(MAX_WORDS, 16)(input_layer)  # Reduced from 32 to 16
     dropout1 = SpatialDropout1D(0.1)(embedding)
     
-    # Single LSTM layer (removed the second LSTM)
-    lstm_features = LSTM(32, dropout=0.1, recurrent_dropout=0.1)(dropout1)  # Reduced from 64 to 32
+    # Single LSTM layer
+    lstm_features = LSTM(32, dropout=0.1, recurrent_dropout=0.1)(dropout1)
     
-    # Shared dense layer for all outputs
-    shared_dense = Dense(32, activation='relu')(lstm_features)  # Reduced from 64 to 32
+    # Shared dense layer for initial features
+    shared_dense = Dense(32, activation='relu')(lstm_features)
     shared_dropout = Dropout(0.2)(shared_dense)
     
     # Category prediction (parent level)
     category_output = Dense(output_dims['category'], activation='sigmoid')(shared_dropout)
     
-    # Sub-category prediction (child level)
-    sub_category_output = Dense(output_dims['sub_category'], activation='sigmoid')(shared_dropout)
+    # Sub-category prediction (child level) - influenced by category
+    category_embedding = Dense(16, activation='relu')(category_output)  # Reduced from 32 to 16
+    sub_category_combined = Concatenate()([shared_dropout, category_embedding])
+    sub_category_output = Dense(output_dims['sub_category'], activation='sigmoid')(sub_category_combined)
     
-    # Type prediction (grandchild level)
-    type_output = Dense(output_dims['type'], activation='sigmoid')(shared_dropout)
+    # Type prediction (grandchild level) - influenced by both category and sub-category
+    sub_category_embedding = Dense(16, activation='relu')(sub_category_output)  # Reduced from 32 to 16
+    type_combined = Concatenate()([shared_dropout, category_embedding, sub_category_embedding])
+    type_output = Dense(output_dims['type'], activation='sigmoid')(type_combined)
     
     model = Model(inputs=input_layer, outputs=[category_output, sub_category_output, type_output])
     
-    # Simplified loss weights
+    # Hierarchical loss weights
     model.compile(
         loss=['binary_crossentropy', 'binary_crossentropy', 'binary_crossentropy'],
-        loss_weights=[1.0, 1.0, 1.0],  # Equal weights
+        loss_weights=[1.0, 1.2, 0.8],  # Give more weight to sub-category prediction
         optimizer='adam',
         metrics=['accuracy']
     )
