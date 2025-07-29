@@ -2,16 +2,16 @@ import pandas as pd
 import numpy as np
 import os
 import pickle
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, MultiLabelBinarizer
 from sklearn.utils.class_weight import compute_class_weight
 import tensorflow as tf
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Embedding, LSTM, Dense, SpatialDropout1D
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Embedding, LSTM, Dense, SpatialDropout1D, Input, Concatenate, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
-from clean_data import clean_title  # Ensure this function is correctly defined in your module
+from clean_data import clean_title
 
 # Global constants
 DATA_PATH = './data/raw_data/kashew_supervised_products.csv'
@@ -19,65 +19,61 @@ MODEL_DIR = './model'
 MAX_WORDS = 5000
 MAX_LEN = 50
 
-schema = [
-    {"category": "Seating", "subCategories": [
-        {"name": "Chairs", "types": [
-            {"name": "Accent Chairs"}, {"name": "Office Chairs"},
-            {"name": "Swivel Chairs"}, {"name": "Dining Chairs"}]},
-        {"name": "Sofas", "types": [
-            {"name": "Loveseats"}, {"name": "Sofas"}, {"name": "Sectionals"}]},
-        {"name": "Armchairs", "types": [
-            {"name": "Arm Chairs"}, {"name": "Rocking Chairs"},
-            {"name": "Club Chairs"}, {"name": "Recliners"}]},
-        {"name": "Benches"}, {"name": "Stools", "types": [
-            {"name": "Low Stools"}, {"name": "Bar Stools"}]},
-        {"name": "Ottomans & Footstools"}, {"name": "Chaises & Daybeds"}]},
-    {"category": "Tables & Desks", "subCategories": [
-        {"name": "Tables", "types": [
-            {"name": "Coffee tables"}, {"name": "Console tables"},
-            {"name": "Accent & Side tables"}, {"name": "Dining tables"}]},
-        {"name": "Desks", "types": [
-            {"name": "Desks"}, {"name": "Secretary Desks"}, {"name": "Vanity Desks"}]}]},
-    {"category": "Storage", "subCategories": [
-        {"name": "Dressers & Chests of Drawers"}, {"name": "Nightstands"},
-        {"name": "Armoires & Wardrobes"}, {"name": "Sideboards & Credenzas"},
-        {"name": "Bar Carts"}, {"name": "Storage & Display Cabinets"},
-        {"name": "Bookcases & Shelving"}, {"name": "Trunks & Chests"}]},
-    {"category": "Beds", "subCategories": [
-        {"name": "Headboards"}, {"name": "Bed Frames"}]},
-    {"category": "Decor", "subCategories": [
-        {"name": "Decorative Accessories", "types": [
-            {"name": "Vases"}, {"name": "Sculptures & Statues"},
-            {"name": "Decorative Accents"}, {"name": "Kitchen Accessoires"}]},
-        {"name": "Room Dividers"}, {"name": "Mirrors", "types": [
-            {"name": "Wall Mirrors"}, {"name": "Full Length & Floor Mirrors"}]},
-        {"name": "Rugs & Carpets", "types": [
-            {"name": "Runners"}, {"name": "Carpets"}]},
-        {"name": "Wall Art", "types": [
-            {"name": "Paintings"}, {"name": "Picture Frames"},
-            {"name": "Wall Decorative Accents"}]}]},
-    {"category": "Lighting", "subCategories": [
-        {"name": "Table Lamps"}, {"name": "Desk Lamps"},
-        {"name": "Ceiling & Wall Lamps"}, {"name": "Floor Lamps"}]},
-]
-
 # Global variables for models and encoders
-category_model = None
-sub_category_model = None
-type_model = None
+hierarchical_model = None
 tokenizer = None
-label_encoder_category = None
-label_encoder_sub_category = None
-label_encoder_type = None
+mlb_category = None
+mlb_sub_category = None
+mlb_type = None
 
-def create_model(output_dim):
-    model = Sequential([
-        Embedding(MAX_WORDS, 40),
-        SpatialDropout1D(0.2),
-        LSTM(100, dropout=0.2, recurrent_dropout=0.2),
-        Dense(output_dim, activation='softmax')
-    ])
-    model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+def parse_multi_labels(label_string):
+    """Parse multi-label strings into lists."""
+    if pd.isna(label_string) or label_string == '':
+        return []
+    return [label.strip() for label in str(label_string).split(',') if label.strip()]
+
+def create_hierarchical_model(output_dims):
+    """Create a hierarchical model that considers parent-child relationships."""
+    # Input layer
+    input_layer = Input(shape=(MAX_LEN,))
+    
+    # Shared embedding and LSTM layers
+    embedding = Embedding(MAX_WORDS, 64)(input_layer)
+    dropout1 = SpatialDropout1D(0.2)(embedding)
+    lstm = LSTM(128, dropout=0.2, recurrent_dropout=0.2, return_sequences=True)(dropout1)
+    
+    # Extract features from LSTM
+    lstm_features = LSTM(64, dropout=0.2, recurrent_dropout=0.2)(lstm)
+    
+    # Category prediction (parent level)
+    category_dense = Dense(128, activation='relu')(lstm_features)
+    category_dropout = Dropout(0.3)(category_dense)
+    category_output = Dense(output_dims['category'], activation='sigmoid')(category_dropout)
+    
+    # Sub-category prediction (child level) - influenced by category predictions
+    sub_category_dense = Dense(128, activation='relu')(lstm_features)
+    # Concatenate with category predictions for hierarchy
+    category_embedding = Dense(64, activation='relu')(category_output)
+    sub_category_combined = Concatenate()([sub_category_dense, category_embedding])
+    sub_category_dropout = Dropout(0.3)(sub_category_combined)
+    sub_category_output = Dense(output_dims['sub_category'], activation='sigmoid')(sub_category_dropout)
+    
+    # Type prediction (grandchild level) - influenced by both category and sub-category
+    type_dense = Dense(128, activation='relu')(lstm_features)
+    sub_category_embedding = Dense(64, activation='relu')(sub_category_output)
+    type_combined = Concatenate()([type_dense, category_embedding, sub_category_embedding])
+    type_dropout = Dropout(0.3)(type_combined)
+    type_output = Dense(output_dims['type'], activation='sigmoid')(type_dropout)
+    
+    model = Model(inputs=input_layer, outputs=[category_output, sub_category_output, type_output])
+    
+    # Use different loss weights to prioritize hierarchy
+    model.compile(
+        loss=['binary_crossentropy', 'binary_crossentropy', 'binary_crossentropy'],
+        loss_weights=[1.0, 1.2, 0.8],  # Give more weight to sub-category prediction
+        optimizer='adam',
+        metrics=['accuracy']
+    )
     return model
 
 def save_model_as_tf(model, model_name):
@@ -89,188 +85,122 @@ def save_object(obj, filename):
     with open(f'{MODEL_DIR}/{filename}', 'wb') as handle:
         pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-def train_and_save_model(padded_sequences, labels, model_name, y_integers):
-    class_weights = compute_class_weight('balanced', classes=np.unique(y_integers), y=y_integers)
-    class_weight_dict = dict(enumerate(class_weights))
+def train_hierarchical_model(padded_sequences, category_labels, sub_category_labels, type_labels):
+    """Train a hierarchical model that considers all levels together."""
+    output_dims = {
+        'category': category_labels.shape[1],
+        'sub_category': sub_category_labels.shape[1],
+        'type': type_labels.shape[1]
+    }
     
-    model = create_model(labels.shape[1])
-    model.fit(padded_sequences, labels, batch_size=4, epochs=10, validation_split=0.2, 
-              callbacks=[EarlyStopping(monitor='val_loss', patience=3, min_delta=0.0001)], 
-              class_weight=class_weight_dict)
-    save_model_as_tf(model, model_name)
+    model = create_hierarchical_model(output_dims)
+    
+    print(f"Training hierarchical model with {len(padded_sequences)} samples")
+    print(f"Category classes: {category_labels.shape[1]}")
+    print(f"Sub-category classes: {sub_category_labels.shape[1]}")
+    print(f"Type classes: {type_labels.shape[1]}")
+    
+    model.fit(
+        padded_sequences,
+        [category_labels, sub_category_labels, type_labels],
+        batch_size=32,
+        epochs=20,
+        validation_split=0.2,
+        callbacks=[EarlyStopping(monitor='val_loss', patience=7, min_delta=0.001, restore_best_weights=True)],
+        verbose=1
+    )
+    
+    save_model_as_tf(model, 'hierarchical_model')
 
 def load_models_and_encoders():
-    global category_model, sub_category_model, type_model
-    global tokenizer, label_encoder_category, label_encoder_sub_category, label_encoder_type
+    global hierarchical_model, tokenizer, mlb_category, mlb_sub_category, mlb_type
 
-    # Load models
-    category_model = tf.keras.models.load_model(f'{MODEL_DIR}/category', custom_objects={'Adam': tf.keras.optimizers.Adam})
-    sub_category_model = tf.keras.models.load_model(f'{MODEL_DIR}/sub_category', custom_objects={'Adam': tf.keras.optimizers.Adam})
-    type_model = tf.keras.models.load_model(f'{MODEL_DIR}/type', custom_objects={'Adam': tf.keras.optimizers.Adam})
+    # Load hierarchical model
+    hierarchical_model = tf.keras.models.load_model(f'{MODEL_DIR}/hierarchical_model', custom_objects={'Adam': tf.keras.optimizers.Adam})
 
-    # Load tokenizer and encoders
+    # Load tokenizer and binarizers
     with open(f'{MODEL_DIR}/tokenizer.pickle', 'rb') as handle:
         tokenizer = pickle.load(handle)
-    with open(f'{MODEL_DIR}/label_encoder_category.pickle', 'rb') as handle:
-        label_encoder_category = pickle.load(handle)
-    with open(f'{MODEL_DIR}/label_encoder_sub_category.pickle', 'rb') as handle:
-        label_encoder_sub_category = pickle.load(handle)
-    with open(f'{MODEL_DIR}/label_encoder_type.pickle', 'rb') as handle:
-        label_encoder_type = pickle.load(handle)
-
-def adjust_predictions_based_on_schema(category, sub_category, type_):
-    def find_valid_category(category_name):
-        for cat in schema:
-            if cat['category'] == category_name:
-                return cat
-        return None
-
-    def find_valid_sub_categories(category_schema, sub_category_names):
-        valid_sub_categories = []
-        for sub_name in sub_category_names:
-            for sub in category_schema.get('subCategories', []):
-                if sub['name'] == sub_name:
-                    valid_sub_categories.append(sub)
-                    break
-        return valid_sub_categories
-
-    def find_valid_types(sub_category_schema, type_names):
-        valid_types = []
-        if 'types' in sub_category_schema:
-            available_types = [t['name'] for t in sub_category_schema['types']]
-            for type_name in type_names:
-                if type_name in available_types:
-                    valid_types.append(type_name)
-                # Ensure that only valid types are considered
-        return valid_types or ['None']
-
-    # Split the predictions into lists
-    categories = [cat.strip() for cat in category.split(',') if cat.strip()]
-    sub_categories = [sub.strip() for sub in sub_category.split(',') if sub.strip()]
-    types = [typ.strip() for typ in type_.split(',') if typ.strip()]
-
-    adjusted_categories = []
-    adjusted_sub_categories = []
-    adjusted_types = []
-
-    for cat in categories:
-        category_schema = find_valid_category(cat)
-        if category_schema:
-            valid_sub_categories = find_valid_sub_categories(category_schema, sub_categories)
-            if valid_sub_categories:
-                for sub_cat in valid_sub_categories:
-                    valid_types = find_valid_types(sub_cat, types)
-                    adjusted_categories.append(cat)
-                    adjusted_sub_categories.append(sub_cat['name'])
-                    adjusted_types.extend(valid_types)
-            else:
-                # Continue only if no valid sub-categories are found
-                continue
-        else:
-            # Continue only if no valid categories are found
-            continue
-
-    if not adjusted_categories:
-        adjusted_categories.append('None')
-        adjusted_sub_categories.append('None')
-        adjusted_types.append('None')
-
-    adjusted_categories = sorted(set(adjusted_categories))
-    adjusted_sub_categories = sorted(set(adjusted_sub_categories))
-    adjusted_types = sorted(set(adjusted_types))
-
-    return ', '.join(adjusted_categories), ', '.join(adjusted_sub_categories), ', '.join(adjusted_types)
+    with open(f'{MODEL_DIR}/mlb_category.pickle', 'rb') as handle:
+        mlb_category = pickle.load(handle)
+    with open(f'{MODEL_DIR}/mlb_sub_category.pickle', 'rb') as handle:
+        mlb_sub_category = pickle.load(handle)
+    with open(f'{MODEL_DIR}/mlb_type.pickle', 'rb') as handle:
+        mlb_type = pickle.load(handle)
 
 def train_models(data_path):
+    """Train hierarchical multi-label classification models."""
     tf.keras.backend.clear_session()
     df = pd.read_csv(data_path)
     df['clean_title'] = df['title'].apply(clean_title)
 
+    # Parse multi-labels
+    df['categories'] = df['category'].apply(parse_multi_labels)
+    df['sub_categories'] = df['sub_category'].apply(parse_multi_labels)
+    df['types'] = df['type'].apply(parse_multi_labels)
+
+    # Create tokenizer
     tokenizer = Tokenizer(num_words=MAX_WORDS, lower=True)
     tokenizer.fit_on_texts(df['clean_title'])
     sequences = tokenizer.texts_to_sequences(df['clean_title'])
     padded_sequences = pad_sequences(sequences, maxlen=MAX_LEN)
 
-    label_encoder_category = LabelEncoder()
-    label_encoder_sub_category = LabelEncoder()
-    label_encoder_type = LabelEncoder()
+    # Create MultiLabelBinarizers for multi-label classification
+    mlb_category = MultiLabelBinarizer()
+    mlb_sub_category = MultiLabelBinarizer()
+    mlb_type = MultiLabelBinarizer()
 
-    df['category_encoded'] = label_encoder_category.fit_transform(df['category'])
-    df['sub_category_encoded'] = label_encoder_sub_category.fit_transform(df['sub_category'])
-    df['type_encoded'] = label_encoder_type.fit_transform(df['type'].fillna('None'))  # Handle NaN types
+    # Transform labels
+    category_labels = mlb_category.fit_transform(df['categories'])
+    sub_category_labels = mlb_sub_category.fit_transform(df['sub_categories'])
+    type_labels = mlb_type.fit_transform(df['types'])
 
-    category_labels = to_categorical(df['category_encoded'])
-    sub_category_labels = to_categorical(df['sub_category_encoded'])
-    type_labels = to_categorical(df['type_encoded'])
+    print(f"Category classes: {len(mlb_category.classes_)}")
+    print(f"Sub-category classes: {len(mlb_sub_category.classes_)}")
+    print(f"Type classes: {len(mlb_type.classes_)}")
 
-    # Pass integer-encoded labels for class weight computation
-    train_and_save_model(padded_sequences, category_labels, 'category', df['category_encoded'])
-    train_and_save_model(padded_sequences, sub_category_labels, 'sub_category', df['sub_category_encoded'])
-    train_and_save_model(padded_sequences, type_labels, 'type', df['type_encoded'])
+    # Train hierarchical model
+    train_hierarchical_model(padded_sequences, category_labels, sub_category_labels, type_labels)
 
+    # Save tokenizer and binarizers
     save_object(tokenizer, 'tokenizer.pickle')
-    save_object(label_encoder_category, 'label_encoder_category.pickle')
-    save_object(label_encoder_sub_category, 'label_encoder_sub_category.pickle')
-    save_object(label_encoder_type, 'label_encoder_type.pickle')
+    save_object(mlb_category, 'mlb_category.pickle')
+    save_object(mlb_sub_category, 'mlb_sub_category.pickle')
+    save_object(mlb_type, 'mlb_type.pickle')
 
 def predict_hierarchy(title):
+    """Predict hierarchical categories using the trained model."""
     # Preprocess the title
     clean_title_text = clean_title(title)
     sequence = tokenizer.texts_to_sequences([clean_title_text])
     padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN)
     
-    # Make initial predictions
-    category_pred = category_model.predict(padded_sequence)
-    category = label_encoder_category.inverse_transform([np.argmax(category_pred)])[0]
+    # Make predictions
+    category_pred, sub_category_pred, type_pred = hierarchical_model.predict(padded_sequence)
     
-    # Mask irrelevant subcategory predictions based on category
-    sub_category_pred = sub_category_model.predict(padded_sequence)
-    possible_sub_categories = [sc for sc in schema if sc['category'] == category][0]['subCategories']
-    filtered_sub_category_pred = [
-        (idx, pred) for idx, pred in enumerate(sub_category_pred[0]) 
-        if label_encoder_sub_category.inverse_transform([idx])[0] in [sc['name'] for sc in possible_sub_categories]
-    ]
-    # Pick the subcategory with the highest probability
-    sub_category_idx = max(filtered_sub_category_pred, key=lambda x: x[1])[0]
-    sub_category = label_encoder_sub_category.inverse_transform([sub_category_idx])[0]
+    # Convert predictions to labels with adaptive thresholds
+    category_threshold = 0.25
+    sub_category_threshold = 0.25
+    type_threshold = 0.25
     
-    # Mask irrelevant type predictions based on subcategory
-    type_pred = type_model.predict(padded_sequence)
-    sub_category_schema = next((sc for sc in possible_sub_categories if sc['name'] == sub_category), None)
-    if sub_category_schema and 'types' in sub_category_schema:
-        possible_types = [t['name'] for t in sub_category_schema['types']]
-        filtered_type_pred = [
-            (idx, pred) for idx, pred in enumerate(type_pred[0])
-            if label_encoder_type.inverse_transform([idx])[0] in possible_types
-        ]
-        type_idx = max(filtered_type_pred, key=lambda x: x[1])[0]
-        type_ = label_encoder_type.inverse_transform([type_idx])[0]
-    else:
-        type_ = ''
+    # Get predicted categories
+    category_indices = np.where(category_pred[0] > category_threshold)[0]
+    predicted_categories = mlb_category.classes_[category_indices]
     
-    # Adjust based on schema for any final mismatches
-    adjusted_category, adjusted_sub_category, adjusted_type = adjust_predictions_based_on_schema(category, sub_category, type_)
+    # Get predicted sub-categories
+    sub_category_indices = np.where(sub_category_pred[0] > sub_category_threshold)[0]
+    predicted_sub_categories = mlb_sub_category.classes_[sub_category_indices]
     
-    return adjusted_category, adjusted_sub_category, adjusted_type
+    # Get predicted types
+    type_indices = np.where(type_pred[0] > type_threshold)[0]
+    predicted_types = mlb_type.classes_[type_indices]
+    
+    # Join multiple predictions
+    category_str = ', '.join(predicted_categories) if len(predicted_categories) > 0 else 'None'
+    sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
+    type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
+    
+    return category_str, sub_category_str, type_str
 
-
-
-# Uncomment the following lines to train models and make predictions
-# train_models(DATA_PATH)
-# Uncomment below lines only if you need to test the predictions after training
-# load_models_and_encoders()
-# # # Test with examples
-# titles = [
-
-#     'BR Home Zermatt Armchair',
-#     'BR Home Mirza Sphere Pendant (We Have 2)',
-#     'Red Lacquered Mid Century Chair w/ Boucle Fabric (We Have 2)',
-#     "Haworth Zody Mesh Office Chair", 
-#     "Acrylic Bench on Wheels and Colorful Fabric",
-#     "Custom Pink Flower Repeat Fabric Armchair ((Sold Individually//We Have 2)"
-
-# ]
-
-# for title in titles:
-#     predicted_category, predicted_sub_category, predicted_type = predict_hierarchy(title)
-#     print(f'Predicted - CAT: {predicted_category}, SUB: {predicted_sub_category}, TYP: {predicted_type}')
+# Uncomment to train models
+# train_models(DATA_PATH) 
