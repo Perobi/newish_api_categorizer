@@ -27,6 +27,7 @@ mlb_sub_category = None
 mlb_type = None
 _models_loaded = False
 _loading_lock = False  # Prevent multiple simultaneous loads
+_models_unloaded = True  # Track if models are unloaded
 
 def parse_multi_labels(label_string):
     """Parse multi-label strings into lists."""
@@ -168,6 +169,7 @@ def load_models_and_encoders():
         gc.collect()
         
         _models_loaded = True
+        _models_unloaded = False
         print("✅ Models loaded successfully!")
         
     except Exception as e:
@@ -176,6 +178,49 @@ def load_models_and_encoders():
         raise
     finally:
         _loading_lock = False
+
+def unload_models():
+    """Unload models to free memory."""
+    global hierarchical_model, tokenizer, mlb_category, mlb_sub_category, mlb_type, _models_loaded, _models_unloaded
+    
+    if _models_unloaded:
+        return  # Already unloaded
+    
+    try:
+        print("🗑️ Unloading models to free memory...")
+        
+        # Clear TensorFlow session
+        tf.keras.backend.clear_session()
+        
+        # Delete model references
+        del hierarchical_model
+        del tokenizer
+        del mlb_category
+        del mlb_sub_category
+        del mlb_type
+        
+        # Set to None
+        hierarchical_model = None
+        tokenizer = None
+        mlb_category = None
+        mlb_sub_category = None
+        mlb_type = None
+        
+        # Update flags
+        _models_loaded = False
+        _models_unloaded = True
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+        
+        print("✅ Models unloaded successfully!")
+        
+    except Exception as e:
+        print(f"⚠️ Error unloading models: {e}")
+        # Reset flags anyway
+        _models_loaded = False
+        _models_unloaded = True
 
 def train_models(data_path):
     """Train hierarchical multi-label classification models."""
@@ -219,9 +264,9 @@ def train_models(data_path):
 
 def predict_hierarchy(title):
     """Predict hierarchical categories using the trained model."""
-    global _models_loaded
+    global _models_loaded, _models_unloaded
     
-    # Lazy load models if not already loaded
+    # Load models if not already loaded
     if not _models_loaded:
         load_models_and_encoders()
     
@@ -263,9 +308,8 @@ def predict_hierarchy(title):
         sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
         type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
         
-        # Memory cleanup after prediction
-        import gc
-        gc.collect()
+        # Unload models immediately after prediction to save memory
+        unload_models()
         
         return category_str, sub_category_str, type_str
         
@@ -273,7 +317,7 @@ def predict_hierarchy(title):
         # If prediction fails, try to reload models and retry once
         if _models_loaded:
             print(f"⚠️ Prediction failed, attempting model reload: {e}")
-            _models_loaded = False
+            unload_models()
             load_models_and_encoders()
             
             # Retry prediction
@@ -297,9 +341,8 @@ def predict_hierarchy(title):
             sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
             type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
             
-            # Memory cleanup
-            import gc
-            gc.collect()
+            # Unload models after retry
+            unload_models()
             
             return category_str, sub_category_str, type_str
         else:
