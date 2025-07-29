@@ -11,7 +11,7 @@ from datetime import datetime
 from collections import defaultdict, Counter
 
 # API endpoint
-API_URL = "https://categorizer-api-2d06dff61638.herokuapp.com"
+API_URL = "http://localhost:8080"
 
 def load_hierarchy_test_data():
     """Load data with known hierarchical relationships"""
