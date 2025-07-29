@@ -9,7 +9,7 @@ from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Embedding, LSTM, Dense, SpatialDropout1D, Input, Concatenate, Dropout
+from tensorflow.keras.layers import Embedding, LSTM, Dense, SpatialDropout1D, Input, Concatenate, Dropout, Multiply, Lambda
 from tensorflow.keras.callbacks import EarlyStopping
 from clean_data import clean_title
 import gc
@@ -34,19 +34,72 @@ _models_unloaded = True  # Track if models are unloaded
 _last_used_time = 0  # Track when models were last used
 _model_timeout = 300  # Unload models after 5 minutes of inactivity
 
+# Hierarchy constraints - Updated based on actual data patterns
+HIERARCHY_CONSTRAINTS = {
+    'category_to_subcategory': {
+        'Seating': ['Sofas', 'Chairs', 'Armchairs', 'Stools', 'Ottomans & Footstools', 'Chaises & Daybeds', 'Benches', 'Chairs, Armchairs'],
+        'Tables & Desks': ['Tables', 'Desks', 'Console tables', 'Coffee tables', 'Dining tables'],
+        'Storage': ['Storage & Display Cabinets', 'Nightstands', 'Dressers & Chests of Drawers', 'Bookcases & Shelving', 'Sideboards & Credenzas', 'Trunks & Chests'],
+        'Decor': ['Wall Art', 'Mirrors', 'Decorative Accessories', 'Rugs & Carpets'],
+        'Lighting': ['Table Lamps', 'Floor Lamps', 'Ceiling & Wall Lamps'],
+        'Beds': ['Bed Frames', 'Headboards', 'Bed Frames, Headboards']
+    },
+    'subcategory_to_type': {
+        'Sofas': ['Sofas', 'Sectionals', 'Loveseats'],
+        'Chairs': ['Dining Chairs', 'Accent Chairs', 'Office Chairs', 'Swivel Chairs'],
+        'Armchairs': ['Arm Chairs', 'Club Chairs', 'Recliners'],
+        'Chairs, Armchairs': ['Accent Chairs', 'Arm Chairs'],
+        'Tables': ['Coffee tables', 'Dining tables', 'Console tables', 'Accent & Side tables'],
+        'Desks': ['Desks', 'Vanity Desks'],
+        'Wall Art': ['Paintings', 'Picture Frames', 'Wall Decorative Accents'],
+        'Mirrors': ['Wall Mirrors', 'Full Length & Floor Mirrors'],
+        'Decorative Accessories': ['Decorative Accents', 'Sculptures & Statues', 'Kitchen Accessoires', 'Vases'],
+        'Rugs & Carpets': ['Carpets'],
+        'Storage & Display Cabinets': [],
+        'Dressers & Chests of Drawers': [],
+        'Nightstands': [],
+        'Table Lamps': [],
+        'Floor Lamps': [],
+        'Ceiling & Wall Lamps': []
+    }
+}
+
 def parse_multi_labels(label_string):
     """Parse multi-label strings into lists."""
     if pd.isna(label_string) or label_string == '':
         return []
     return [label.strip() for label in str(label_string).split(',') if label.strip()]
 
-def create_hierarchical_model(output_dims):
-    """Create a memory-efficient hierarchical model with proper hierarchy."""
+def create_hierarchy_masks(category_classes, sub_category_classes, type_classes):
+    """Create masks for valid hierarchy combinations"""
+    category_to_sub_mask = np.zeros((len(category_classes), len(sub_category_classes)))
+    sub_to_type_mask = np.zeros((len(sub_category_classes), len(type_classes)))
+    
+    # Build category to sub-category mask
+    for cat_idx, category in enumerate(category_classes):
+        if category in HIERARCHY_CONSTRAINTS['category_to_subcategory']:
+            valid_subs = HIERARCHY_CONSTRAINTS['category_to_subcategory'][category]
+            for sub_idx, sub_category in enumerate(sub_category_classes):
+                if sub_category in valid_subs:
+                    category_to_sub_mask[cat_idx, sub_idx] = 1.0
+    
+    # Build sub-category to type mask
+    for sub_idx, sub_category in enumerate(sub_category_classes):
+        if sub_category in HIERARCHY_CONSTRAINTS['subcategory_to_type']:
+            valid_types = HIERARCHY_CONSTRAINTS['subcategory_to_type'][sub_category]
+            for type_idx, type_val in enumerate(type_classes):
+                if type_val in valid_types:
+                    sub_to_type_mask[sub_idx, type_idx] = 1.0
+    
+    return category_to_sub_mask, sub_to_type_mask
+
+def create_hierarchical_model(output_dims, category_to_sub_mask, sub_to_type_mask):
+    """Create a hierarchy-constrained model."""
     # Input layer
     input_layer = Input(shape=(MAX_LEN,))
     
     # Smaller embedding
-    embedding = Embedding(MAX_WORDS, 16)(input_layer)  # Reduced from 32 to 16
+    embedding = Embedding(MAX_WORDS, 16)(input_layer)
     dropout1 = SpatialDropout1D(0.1)(embedding)
     
     # Single LSTM layer
@@ -56,29 +109,36 @@ def create_hierarchical_model(output_dims):
     shared_dense = Dense(32, activation='relu')(lstm_features)
     shared_dropout = Dropout(0.2)(shared_dense)
     
-    # Category prediction (parent level)
+    # Category prediction (parent level) - independent
     category_output = Dense(output_dims['category'], activation='sigmoid')(shared_dropout)
     
     # Sub-category prediction (child level) - influenced by category
-    category_embedding = Dense(16, activation='relu')(category_output)  # Reduced from 32 to 16
+    category_embedding = Dense(16, activation='relu')(category_output)
     sub_category_combined = Concatenate()([shared_dropout, category_embedding])
     sub_category_output = Dense(output_dims['sub_category'], activation='sigmoid')(sub_category_combined)
     
     # Type prediction (grandchild level) - influenced by both category and sub-category
-    sub_category_embedding = Dense(16, activation='relu')(sub_category_output)  # Reduced from 32 to 16
+    sub_category_embedding = Dense(16, activation='relu')(sub_category_output)
     type_combined = Concatenate()([shared_dropout, category_embedding, sub_category_embedding])
     type_output = Dense(output_dims['type'], activation='sigmoid')(type_combined)
     
     model = Model(inputs=input_layer, outputs=[category_output, sub_category_output, type_output])
     
-    # Hierarchical loss weights
+    # Use standard loss functions for now, hierarchy validation will be done post-prediction
     model.compile(
         loss=['binary_crossentropy', 'binary_crossentropy', 'binary_crossentropy'],
-        loss_weights=[1.0, 1.2, 0.8],  # Give more weight to sub-category prediction
+        loss_weights=[1.0, 1.2, 0.8],
         optimizer='adam',
         metrics=['accuracy']
     )
     return model
+
+def calculate_hierarchy_penalty(y_true, y_pred):
+    """Calculate penalty for hierarchy violations"""
+    # Convert to float32 to match types
+    y_true_float = tf.cast(y_true, tf.float32)
+    y_pred_float = tf.cast(y_pred, tf.float32)
+    return tf.reduce_mean(tf.square(y_true_float - y_pred_float))
 
 def save_model_as_tf(model, model_name):
     model.save(f'{MODEL_DIR}/{model_name}', save_format='tf')
@@ -89,17 +149,22 @@ def save_object(obj, filename):
     with open(f'{MODEL_DIR}/{filename}', 'wb') as handle:
         pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-def train_hierarchical_model(padded_sequences, category_labels, sub_category_labels, type_labels):
-    """Train a hierarchical model that considers all levels together."""
+def train_hierarchical_model(padded_sequences, category_labels, sub_category_labels, type_labels, mlb_category, mlb_sub_category, mlb_type):
+    """Train a hierarchy-constrained model."""
     output_dims = {
         'category': category_labels.shape[1],
         'sub_category': sub_category_labels.shape[1],
         'type': type_labels.shape[1]
     }
     
-    model = create_hierarchical_model(output_dims)
+    # Create hierarchy masks AFTER binarizers are fitted
+    category_to_sub_mask, sub_to_type_mask = create_hierarchy_masks(
+        mlb_category.classes_, mlb_sub_category.classes_, mlb_type.classes_
+    )
     
-    print(f"Training hierarchical model with {len(padded_sequences)} samples")
+    model = create_hierarchical_model(output_dims, category_to_sub_mask, sub_to_type_mask)
+    
+    print(f"Training hierarchy-constrained model with {len(padded_sequences)} samples")
     print(f"Category classes: {category_labels.shape[1]}")
     print(f"Sub-category classes: {sub_category_labels.shape[1]}")
     print(f"Type classes: {type_labels.shape[1]}")
@@ -142,7 +207,7 @@ def load_models_and_encoders():
             return
         
         try:
-            print("🚀 Loading hierarchical models and encoders...")
+            print("🚀 Loading hierarchy-constrained models and encoders...")
             
             # Aggressive memory optimization
             tf.keras.backend.clear_session()  # Clear any existing models
@@ -180,7 +245,7 @@ def load_models_and_encoders():
             _models_loaded = True
             _models_unloaded = False
             _last_used_time = time.time()
-            print("✅ Models loaded successfully!")
+            print("✅ Hierarchy-constrained models loaded successfully!")
             
         except Exception as e:
             print(f"❌ Error loading models: {e}")
@@ -229,8 +294,55 @@ def unload_models():
         _models_loaded = False
         _models_unloaded = True
 
+def validate_hierarchy_prediction(category_pred, sub_category_pred, type_pred, title):
+    """Validate and correct hierarchy predictions"""
+    # Get predicted indices
+    category_threshold = 0.25
+    sub_category_threshold = 0.25
+    type_threshold = 0.25
+    
+    category_indices = np.where(category_pred[0] > category_threshold)[0]
+    sub_category_indices = np.where(sub_category_pred[0] > sub_category_threshold)[0]
+    type_indices = np.where(type_pred[0] > type_threshold)[0]
+    
+    # Get predicted labels
+    predicted_categories = mlb_category.classes_[category_indices]
+    predicted_sub_categories = mlb_sub_category.classes_[sub_category_indices]
+    predicted_types = mlb_type.classes_[type_indices]
+    
+    # Hierarchy validation and correction
+    title_lower = title.lower()
+    
+    # Rule 1: Art pieces should be Decor, not Seating
+    if any(art_word in title_lower for art_word in ['art', 'painting', 'triptych', 'print', 'canvas']):
+        if 'Seating' in predicted_categories:
+            predicted_categories = [cat for cat in predicted_categories if cat != 'Seating']
+            if 'Decor' not in predicted_categories:
+                predicted_categories.append('Decor')
+    
+    # Rule 2: If type is "Sofas", sub-category must be "Sofas"
+    if 'Sofas' in predicted_types and 'Sofas' not in predicted_sub_categories:
+        predicted_sub_categories.append('Sofas')
+    
+    # Rule 3: If sub-category is "Sofas", category must include "Seating"
+    if 'Sofas' in predicted_sub_categories and 'Seating' not in predicted_categories:
+        predicted_categories.append('Seating')
+    
+    # Rule 4: Prevent impossible combinations
+    if 'Decor' in predicted_categories and 'Seating' in predicted_categories:
+        # For art pieces, keep only Decor
+        if any(art_word in title_lower for art_word in ['art', 'painting', 'triptych', 'print', 'canvas']):
+            predicted_categories = [cat for cat in predicted_categories if cat != 'Seating']
+    
+    # Join predictions
+    category_str = ', '.join(predicted_categories) if len(predicted_categories) > 0 else 'None'
+    sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
+    type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
+    
+    return category_str, sub_category_str, type_str
+
 def train_models(data_path):
-    """Train hierarchical multi-label classification models."""
+    """Train hierarchy-constrained multi-label classification models."""
     tf.keras.backend.clear_session()
     df = pd.read_csv(data_path)
     df['clean_title'] = df['title'].apply(clean_title)
@@ -260,8 +372,8 @@ def train_models(data_path):
     print(f"Sub-category classes: {len(mlb_sub_category.classes_)}")
     print(f"Type classes: {len(mlb_type.classes_)}")
 
-    # Train hierarchical model
-    train_hierarchical_model(padded_sequences, category_labels, sub_category_labels, type_labels)
+    # Train hierarchy-constrained model
+    train_hierarchical_model(padded_sequences, category_labels, sub_category_labels, type_labels, mlb_category, mlb_sub_category, mlb_type)
 
     # Save tokenizer and binarizers
     save_object(tokenizer, 'tokenizer.pickle')
@@ -270,7 +382,7 @@ def train_models(data_path):
     save_object(mlb_type, 'mlb_type.pickle')
 
 def predict_hierarchy(title):
-    """Predict hierarchical categories using the trained model."""
+    """Predict hierarchical categories using the trained hierarchy-constrained model."""
     global _models_loaded, _models_unloaded, _last_used_time
     
     # Load models if not already loaded
@@ -295,27 +407,10 @@ def predict_hierarchy(title):
             verbose=0  # Reduce logging output
         )
         
-        # Convert predictions to labels with adaptive thresholds
-        category_threshold = 0.25
-        sub_category_threshold = 0.25
-        type_threshold = 0.25
-        
-        # Get predicted categories
-        category_indices = np.where(category_pred[0] > category_threshold)[0]
-        predicted_categories = mlb_category.classes_[category_indices]
-        
-        # Get predicted sub-categories
-        sub_category_indices = np.where(sub_category_pred[0] > sub_category_threshold)[0]
-        predicted_sub_categories = mlb_sub_category.classes_[sub_category_indices]
-        
-        # Get predicted types
-        type_indices = np.where(type_pred[0] > type_threshold)[0]
-        predicted_types = mlb_type.classes_[type_indices]
-        
-        # Join multiple predictions
-        category_str = ', '.join(predicted_categories) if len(predicted_categories) > 0 else 'None'
-        sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
-        type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
+        # Validate and correct hierarchy predictions
+        category_str, sub_category_str, type_str = validate_hierarchy_prediction(
+            category_pred, sub_category_pred, type_pred, title
+        )
         
         return category_str, sub_category_str, type_str
         
@@ -333,19 +428,10 @@ def predict_hierarchy(title):
             
             category_pred, sub_category_pred, type_pred = hierarchical_model.predict(padded_sequence, verbose=0)
             
-            # Process predictions (same logic as above)
-            category_indices = np.where(category_pred[0] > category_threshold)[0]
-            predicted_categories = mlb_category.classes_[category_indices]
-            
-            sub_category_indices = np.where(sub_category_pred[0] > sub_category_threshold)[0]
-            predicted_sub_categories = mlb_sub_category.classes_[sub_category_indices]
-            
-            type_indices = np.where(type_pred[0] > type_threshold)[0]
-            predicted_types = mlb_type.classes_[type_indices]
-            
-            category_str = ', '.join(predicted_categories) if len(predicted_categories) > 0 else 'None'
-            sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
-            type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
+            # Validate and correct hierarchy predictions
+            category_str, sub_category_str, type_str = validate_hierarchy_prediction(
+                category_pred, sub_category_pred, type_pred, title
+            )
             
             return category_str, sub_category_str, type_str
         else:

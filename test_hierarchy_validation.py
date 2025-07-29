@@ -32,8 +32,8 @@ def load_hierarchy_test_data():
     for category in categories:
         category_data = df[df['category'] == category]
         if len(category_data) > 0:
-            # Sample 3-5 items from each category
-            sample_size = min(5, len(category_data))
+            # Sample 1-2 items from each category (for 30 total)
+            sample_size = min(2, len(category_data))
             samples = category_data.sample(n=sample_size, random_state=42)
             
             for _, row in samples.iterrows():

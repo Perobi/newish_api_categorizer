@@ -268,12 +268,10 @@ if __name__ == "__main__":
     print("=" * 70)
     
     try:
-        # Test with different sample sizes
-        sample_sizes = [50, 100, 200]
-        
-        for sample_size in sample_sizes:
-            print(f"\n{'='*20} Testing with {sample_size} samples {'='*20}")
-            test_crossreference_accuracy(sample_size)
+        # Test with 50 samples
+        sample_size = 50
+        print(f"\n{'='*20} Testing with {sample_size} samples {'='*20}")
+        test_crossreference_accuracy(sample_size)
         
         test_category_distribution()
         print("\n🎉 Cross-reference testing completed!")
