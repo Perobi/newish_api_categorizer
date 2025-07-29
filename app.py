@@ -16,6 +16,7 @@ app = Flask(__name__)
 _models_initialized = False
 _memory_cleanup_thread = None
 _cleanup_running = False
+_first_request_made = False
 
 def initialize_models():
     """Initialize models on first request to reduce cold start time."""
@@ -63,6 +64,13 @@ def stop_memory_cleanup():
     global _cleanup_running
     _cleanup_running = False
 
+def setup_on_first_request():
+    """Setup memory cleanup on first request."""
+    global _first_request_made
+    if not _first_request_made:
+        start_memory_cleanup()
+        _first_request_made = True
+
 @app.route('/predict', methods=['POST'])
 def predict():
     try: 
@@ -74,6 +82,9 @@ def predict():
         if not title or not title.strip():
             return jsonify({'error': 'No title provided or title is empty'}), 400
     
+        # Setup on first request
+        setup_on_first_request()
+        
         # Initialize models if needed
         initialize_models()
         
@@ -94,6 +105,9 @@ def predict():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint with enhanced memory monitoring."""
+    # Setup on first request
+    setup_on_first_request()
+    
     try:
         import psutil
         memory_info = {
@@ -174,12 +188,6 @@ def force_model_unload():
     except Exception as e:
         logger.error(f"Error during model unload: {e}")
         return jsonify({'error': str(e)}), 500
-
-# Startup event to initialize memory cleanup
-@app.before_first_request
-def setup_memory_cleanup():
-    """Initialize memory cleanup on first request."""
-    start_memory_cleanup()
 
 # Shutdown event to clean up resources
 @app.teardown_appcontext
