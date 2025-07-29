@@ -12,12 +12,15 @@ from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Embedding, LSTM, Dense, SpatialDropout1D, Input, Concatenate, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
 from clean_data import clean_title
+import gc
+import time
+import threading
 
 # Global constants
 DATA_PATH = './data/raw_data/kashew_supervised_products.csv'
 MODEL_DIR = './model'
-MAX_WORDS = 3000  # Reduced from 5000 to save memory
-MAX_LEN = 30      # Reduced from 50 to save memory
+MAX_WORDS = 1500  # Further reduced to save memory
+MAX_LEN = 20      # Further reduced to save memory
 
 # Global variables for models and encoders
 hierarchical_model = None
@@ -26,8 +29,10 @@ mlb_category = None
 mlb_sub_category = None
 mlb_type = None
 _models_loaded = False
-_loading_lock = False  # Prevent multiple simultaneous loads
+_loading_lock = threading.Lock()  # Thread-safe lock
 _models_unloaded = True  # Track if models are unloaded
+_last_used_time = 0  # Track when models were last used
+_model_timeout = 300  # Unload models after 5 minutes of inactivity
 
 def parse_multi_labels(label_string):
     """Parse multi-label strings into lists."""
@@ -36,44 +41,36 @@ def parse_multi_labels(label_string):
     return [label.strip() for label in str(label_string).split(',') if label.strip()]
 
 def create_hierarchical_model(output_dims):
-    """Create a hierarchical model that considers parent-child relationships."""
+    """Create a memory-efficient hierarchical model."""
     # Input layer
     input_layer = Input(shape=(MAX_LEN,))
     
-    # Shared embedding and LSTM layers (reduced sizes for memory)
-    embedding = Embedding(MAX_WORDS, 32)(input_layer)  # Reduced from 64 to 32
-    dropout1 = SpatialDropout1D(0.2)(embedding)
-    lstm = LSTM(64, dropout=0.2, recurrent_dropout=0.2, return_sequences=True)(dropout1)  # Reduced from 128 to 64
+    # Smaller embedding
+    embedding = Embedding(MAX_WORDS, 16)(input_layer)  # Reduced from 32 to 16
+    dropout1 = SpatialDropout1D(0.1)(embedding)
     
-    # Extract features from LSTM
-    lstm_features = LSTM(32, dropout=0.2, recurrent_dropout=0.2)(lstm)  # Reduced from 64 to 32
+    # Single LSTM layer (removed the second LSTM)
+    lstm_features = LSTM(32, dropout=0.1, recurrent_dropout=0.1)(dropout1)  # Reduced from 64 to 32
+    
+    # Shared dense layer for all outputs
+    shared_dense = Dense(32, activation='relu')(lstm_features)  # Reduced from 64 to 32
+    shared_dropout = Dropout(0.2)(shared_dense)
     
     # Category prediction (parent level)
-    category_dense = Dense(64, activation='relu')(lstm_features)  # Reduced from 128 to 64
-    category_dropout = Dropout(0.3)(category_dense)
-    category_output = Dense(output_dims['category'], activation='sigmoid')(category_dropout)
+    category_output = Dense(output_dims['category'], activation='sigmoid')(shared_dropout)
     
-    # Sub-category prediction (child level) - influenced by category predictions
-    sub_category_dense = Dense(64, activation='relu')(lstm_features)  # Reduced from 128 to 64
-    # Concatenate with category predictions for hierarchy
-    category_embedding = Dense(32, activation='relu')(category_output)  # Reduced from 64 to 32
-    sub_category_combined = Concatenate()([sub_category_dense, category_embedding])
-    sub_category_dropout = Dropout(0.3)(sub_category_combined)
-    sub_category_output = Dense(output_dims['sub_category'], activation='sigmoid')(sub_category_dropout)
+    # Sub-category prediction (child level)
+    sub_category_output = Dense(output_dims['sub_category'], activation='sigmoid')(shared_dropout)
     
-    # Type prediction (grandchild level) - influenced by both category and sub-category
-    type_dense = Dense(64, activation='relu')(lstm_features)  # Reduced from 128 to 64
-    sub_category_embedding = Dense(32, activation='relu')(sub_category_output)  # Reduced from 64 to 32
-    type_combined = Concatenate()([type_dense, category_embedding, sub_category_embedding])
-    type_dropout = Dropout(0.3)(type_combined)
-    type_output = Dense(output_dims['type'], activation='sigmoid')(type_dropout)
+    # Type prediction (grandchild level)
+    type_output = Dense(output_dims['type'], activation='sigmoid')(shared_dropout)
     
     model = Model(inputs=input_layer, outputs=[category_output, sub_category_output, type_output])
     
-    # Use different loss weights to prioritize hierarchy
+    # Simplified loss weights
     model.compile(
         loss=['binary_crossentropy', 'binary_crossentropy', 'binary_crossentropy'],
-        loss_weights=[1.0, 1.2, 0.8],  # Give more weight to sub-category prediction
+        loss_weights=[1.0, 1.0, 1.0],  # Equal weights
         optimizer='adam',
         metrics=['accuracy']
     )
@@ -114,70 +111,77 @@ def train_hierarchical_model(padded_sequences, category_labels, sub_category_lab
     
     save_model_as_tf(model, 'hierarchical_model')
 
+def check_model_timeout():
+    """Check if models should be unloaded due to inactivity."""
+    global _last_used_time, _models_loaded
+    
+    if _models_loaded and time.time() - _last_used_time > _model_timeout:
+        print(f"🕐 Models inactive for {_model_timeout} seconds, unloading...")
+        unload_models()
+
 def load_models_and_encoders():
     """Load models and encoders - now with lazy loading and thread safety."""
-    global hierarchical_model, tokenizer, mlb_category, mlb_sub_category, mlb_type, _models_loaded, _loading_lock
+    global hierarchical_model, tokenizer, mlb_category, mlb_sub_category, mlb_type, _models_loaded, _models_unloaded, _last_used_time
+    
+    # Check if models should be unloaded due to timeout
+    check_model_timeout()
     
     if _models_loaded:
+        _last_used_time = time.time()  # Update last used time
         return  # Already loaded
     
-    # Prevent multiple simultaneous loads
-    if _loading_lock:
-        # Wait for another thread to finish loading
-        import time
-        while _loading_lock:
-            time.sleep(0.1)
-        return  # Models should now be loaded
-    
-    _loading_lock = True
-    
-    try:
-        print("Loading hierarchical models and encoders...")
+    # Use thread lock to prevent multiple simultaneous loads
+    with _loading_lock:
+        # Double-check after acquiring lock
+        if _models_loaded:
+            _last_used_time = time.time()
+            return
         
-        # Aggressive memory optimization
-        tf.keras.backend.clear_session()  # Clear any existing models
-        import gc
-        gc.collect()  # Force garbage collection
-        
-        # Set TensorFlow memory growth to prevent memory issues
-        gpus = tf.config.experimental.list_physical_devices('GPU')
-        if gpus:
-            try:
-                for gpu in gpus:
-                    tf.config.experimental.set_memory_growth(gpu, True)
-            except RuntimeError as e:
-                print(f"GPU memory growth setting failed: {e}")
-        
-        # Load hierarchical model with memory optimization
-        hierarchical_model = tf.keras.models.load_model(
-            f'{MODEL_DIR}/hierarchical_model', 
-            custom_objects={'Adam': tf.keras.optimizers.Adam},
-            compile=False  # Don't compile to save memory
-        )
-        
-        # Load tokenizer and binarizers
-        with open(f'{MODEL_DIR}/tokenizer.pickle', 'rb') as handle:
-            tokenizer = pickle.load(handle)
-        with open(f'{MODEL_DIR}/mlb_category.pickle', 'rb') as handle:
-            mlb_category = pickle.load(handle)
-        with open(f'{MODEL_DIR}/mlb_sub_category.pickle', 'rb') as handle:
-            mlb_sub_category = pickle.load(handle)
-        with open(f'{MODEL_DIR}/mlb_type.pickle', 'rb') as handle:
-            mlb_type = pickle.load(handle)
-        
-        # Force garbage collection after loading
-        gc.collect()
-        
-        _models_loaded = True
-        _models_unloaded = False
-        print("✅ Models loaded successfully!")
-        
-    except Exception as e:
-        print(f"❌ Error loading models: {e}")
-        _models_loaded = False
-        raise
-    finally:
-        _loading_lock = False
+        try:
+            print("🚀 Loading hierarchical models and encoders...")
+            
+            # Aggressive memory optimization
+            tf.keras.backend.clear_session()  # Clear any existing models
+            gc.collect()  # Force garbage collection
+            
+            # Set TensorFlow memory growth to prevent memory issues
+            gpus = tf.config.experimental.list_physical_devices('GPU')
+            if gpus:
+                try:
+                    for gpu in gpus:
+                        tf.config.experimental.set_memory_growth(gpu, True)
+                except RuntimeError as e:
+                    print(f"GPU memory growth setting failed: {e}")
+            
+            # Load hierarchical model with memory optimization
+            hierarchical_model = tf.keras.models.load_model(
+                f'{MODEL_DIR}/hierarchical_model', 
+                custom_objects={'Adam': tf.keras.optimizers.Adam},
+                compile=False  # Don't compile to save memory
+            )
+            
+            # Load tokenizer and binarizers
+            with open(f'{MODEL_DIR}/tokenizer.pickle', 'rb') as handle:
+                tokenizer = pickle.load(handle)
+            with open(f'{MODEL_DIR}/mlb_category.pickle', 'rb') as handle:
+                mlb_category = pickle.load(handle)
+            with open(f'{MODEL_DIR}/mlb_sub_category.pickle', 'rb') as handle:
+                mlb_sub_category = pickle.load(handle)
+            with open(f'{MODEL_DIR}/mlb_type.pickle', 'rb') as handle:
+                mlb_type = pickle.load(handle)
+            
+            # Force garbage collection after loading
+            gc.collect()
+            
+            _models_loaded = True
+            _models_unloaded = False
+            _last_used_time = time.time()
+            print("✅ Models loaded successfully!")
+            
+        except Exception as e:
+            print(f"❌ Error loading models: {e}")
+            _models_loaded = False
+            raise
 
 def unload_models():
     """Unload models to free memory."""
@@ -211,7 +215,6 @@ def unload_models():
         _models_unloaded = True
         
         # Force garbage collection
-        import gc
         gc.collect()
         
         print("✅ Models unloaded successfully!")
@@ -264,11 +267,13 @@ def train_models(data_path):
 
 def predict_hierarchy(title):
     """Predict hierarchical categories using the trained model."""
-    global _models_loaded, _models_unloaded
+    global _models_loaded, _models_unloaded, _last_used_time
     
     # Load models if not already loaded
     if not _models_loaded:
         load_models_and_encoders()
+    else:
+        _last_used_time = time.time()  # Update last used time
     
     # Verify models are loaded
     if not _models_loaded or hierarchical_model is None:
@@ -308,9 +313,6 @@ def predict_hierarchy(title):
         sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
         type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
         
-        # Unload models immediately after prediction to save memory
-        unload_models()
-        
         return category_str, sub_category_str, type_str
         
     except Exception as e:
@@ -341,12 +343,10 @@ def predict_hierarchy(title):
             sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
             type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
             
-            # Unload models after retry
-            unload_models()
-            
             return category_str, sub_category_str, type_str
         else:
             raise e
 
 # Uncomment to train models
-# train_models(DATA_PATH) 
+# train_models(DATA_PATH)
+
