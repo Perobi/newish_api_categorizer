@@ -62,14 +62,22 @@ def health():
             'memory_used_mb': psutil.virtual_memory().used / 1024 / 1024,
             'memory_available_mb': psutil.virtual_memory().available / 1024 / 1024
         }
+        
+        # Memory warning if usage is high
+        if memory_info['memory_percent'] > 80:
+            logger.warning(f"High memory usage: {memory_info['memory_percent']:.1f}%")
+            
     except ImportError:
         memory_info = {'note': 'psutil not available'}
     
     return jsonify({
         'status': 'healthy', 
         'model': 'hierarchical_multi_label',
-        'memory': memory_info
+        'memory': memory_info,
+        'models_loaded': _models_initialized
     }), 200
+
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))

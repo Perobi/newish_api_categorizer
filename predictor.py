@@ -133,11 +133,16 @@ def load_models_and_encoders():
     try:
         print("Loading hierarchical models and encoders...")
         
-        # Load hierarchical model with memory optimization
+        # Aggressive memory optimization
         tf.keras.backend.clear_session()  # Clear any existing models
+        import gc
+        gc.collect()  # Force garbage collection
+        
+        # Load hierarchical model with memory optimization
         hierarchical_model = tf.keras.models.load_model(
             f'{MODEL_DIR}/hierarchical_model', 
-            custom_objects={'Adam': tf.keras.optimizers.Adam}
+            custom_objects={'Adam': tf.keras.optimizers.Adam},
+            compile=False  # Don't compile to save memory
         )
         
         # Load tokenizer and binarizers
@@ -149,6 +154,9 @@ def load_models_and_encoders():
             mlb_sub_category = pickle.load(handle)
         with open(f'{MODEL_DIR}/mlb_type.pickle', 'rb') as handle:
             mlb_type = pickle.load(handle)
+        
+        # Force garbage collection after loading
+        gc.collect()
         
         _models_loaded = True
         print("✅ Models loaded successfully!")
@@ -246,6 +254,10 @@ def predict_hierarchy(title):
         sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
         type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
         
+        # Memory cleanup after prediction
+        import gc
+        gc.collect()
+        
         return category_str, sub_category_str, type_str
         
     except Exception as e:
@@ -275,6 +287,10 @@ def predict_hierarchy(title):
             category_str = ', '.join(predicted_categories) if len(predicted_categories) > 0 else 'None'
             sub_category_str = ', '.join(predicted_sub_categories) if len(predicted_sub_categories) > 0 else 'None'
             type_str = ', '.join(predicted_types) if len(predicted_types) > 0 else 'None'
+            
+            # Memory cleanup
+            import gc
+            gc.collect()
             
             return category_str, sub_category_str, type_str
         else:
