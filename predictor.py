@@ -25,6 +25,7 @@ tokenizer = None
 mlb_category = None
 mlb_sub_category = None
 mlb_type = None
+_models_loaded = False
 
 def parse_multi_labels(label_string):
     """Parse multi-label strings into lists."""
@@ -103,7 +104,6 @@ def train_hierarchical_model(padded_sequences, category_labels, sub_category_lab
     model.fit(
         padded_sequences,
         [category_labels, sub_category_labels, type_labels],
-        batch_size=32,
         epochs=20,
         validation_split=0.2,
         callbacks=[EarlyStopping(monitor='val_loss', patience=7, min_delta=0.001, restore_best_weights=True)],
@@ -113,8 +113,14 @@ def train_hierarchical_model(padded_sequences, category_labels, sub_category_lab
     save_model_as_tf(model, 'hierarchical_model')
 
 def load_models_and_encoders():
-    global hierarchical_model, tokenizer, mlb_category, mlb_sub_category, mlb_type
-
+    """Load models and encoders - now with lazy loading."""
+    global hierarchical_model, tokenizer, mlb_category, mlb_sub_category, mlb_type, _models_loaded
+    
+    if _models_loaded:
+        return  # Already loaded
+    
+    print("Loading hierarchical models and encoders...")
+    
     # Load hierarchical model
     hierarchical_model = tf.keras.models.load_model(f'{MODEL_DIR}/hierarchical_model', custom_objects={'Adam': tf.keras.optimizers.Adam})
 
@@ -127,6 +133,9 @@ def load_models_and_encoders():
         mlb_sub_category = pickle.load(handle)
     with open(f'{MODEL_DIR}/mlb_type.pickle', 'rb') as handle:
         mlb_type = pickle.load(handle)
+    
+    _models_loaded = True
+    print("✅ Models loaded successfully!")
 
 def train_models(data_path):
     """Train hierarchical multi-label classification models."""
@@ -170,6 +179,10 @@ def train_models(data_path):
 
 def predict_hierarchy(title):
     """Predict hierarchical categories using the trained model."""
+    # Lazy load models if not already loaded
+    if not _models_loaded:
+        load_models_and_encoders()
+    
     # Preprocess the title
     clean_title_text = clean_title(title)
     sequence = tokenizer.texts_to_sequences([clean_title_text])

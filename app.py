@@ -1,13 +1,8 @@
 from flask import Flask, request, jsonify
-from predictor import predict_hierarchy, load_models_and_encoders
+from predictor import predict_hierarchy
 import os
 
 app = Flask(__name__)
-
-# Load the models and encoders when the application starts
-print("Loading hierarchical models and encoders...")
-load_models_and_encoders()
-print("✅ Models loaded successfully!")
 
 @app.route('/predict', methods=['POST'])
 def predict():
